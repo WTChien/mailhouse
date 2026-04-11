@@ -170,7 +170,6 @@ export default function PersistentMailboxPanel() {
       <div className="mail-card__header">
         <div>
           <h2>保留信箱</h2>
-          <p className="muted">由 FastAPI 建立、查詢與刪除，前端不再直接存取 Firestore。</p>
         </div>
         <span className="status-badge persistent">{statusText}</span>
       </div>

@@ -23,6 +23,10 @@ Incoming email
   - 可指定並保存自己想用的名稱
   - 重新整理後仍會保留已保存的清單
   - 可手動載入、複製與刪除
+- **共用郵件檢視**
+  - `30 分鐘信箱` 與 `保留信箱` 共用同一套 `收到的郵件` 介面
+  - 每封信都可 `查看全文 / 收起全文`
+  - 若文字中有疑似驗證碼，介面會額外顯示可點擊複製的候選碼
 
 ## Project structure
 
@@ -152,4 +156,6 @@ Example payload:
 
 - The frontend now talks **only to FastAPI**; it does not access Firestore directly.
 - Temporary mailbox state is saved in browser `localStorage`, so a page refresh will keep the current mailbox until expiry.
+- `30 分鐘信箱` 與 `保留信箱` 的 `收到的郵件` 區塊使用同一個共享元件，因此顯示樣式會一致。
+- If you use the **Cloudflare dashboard quick-edit Worker** fallback script, the stored subject/body may be simplified placeholders. For the original subject and full parsed text, deploy the `worker/` project version with `postal-mime` via Wrangler.
 - A starter rule set is included in `firestore.rules`; tighten it further before production use.

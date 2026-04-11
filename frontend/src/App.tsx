@@ -8,7 +8,6 @@ export default function App() {
           <p className="eyebrow">gradaide.xyz</p>
           <h1>Mailhouse 信箱中心</h1>
         </div>
-        <span className="topbar-badge">Cloudflare + Firestore</span>
       </header>
 
       <TempMail />

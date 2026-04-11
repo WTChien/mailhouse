@@ -215,7 +215,6 @@ export default function TemporaryMailboxPanel() {
       <div className="mail-card__header">
         <div>
           <h2>{TEMP_MAILBOX_MINUTES} 分鐘信箱</h2>
-          <p className="muted">由 FastAPI 建立與查詢，前端只向後端要求資料。</p>
         </div>
         <span className={`status-badge ${isExpired ? 'expired' : 'active'}`}>{statusText}</span>
       </div>
