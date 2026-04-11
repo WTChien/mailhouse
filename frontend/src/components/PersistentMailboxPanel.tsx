@@ -8,6 +8,7 @@ import {
   markMessageRead,
 } from '../lib/api';
 import MailMessageTable from './MailMessageTable';
+import RegistrationHelperPanel from './RegistrationHelperPanel';
 import { SAVED_MAILBOXES_KEY, normalizeMailboxId, readSavedMailboxes, type MailMessage } from './mailboxUtils';
 
 type BusyAction = 'open' | 'delete' | null;
@@ -212,6 +213,11 @@ export default function PersistentMailboxPanel() {
           </button>
         </div>
       </div>
+
+      <RegistrationHelperPanel onApplyName={(value) => {
+        setRequestedMailboxId(value);
+        setErrorText('');
+      }} />
 
       <div className="saved-mailboxes">
         <div className="message-section__header">

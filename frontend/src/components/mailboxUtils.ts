@@ -18,6 +18,22 @@ export type TemporaryMailboxState = {
   expireAt: string;
 };
 
+const UPPER_LOWER_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
+const LOWER_ALNUM_CHARS = 'abcdefghijklmnopqrstuvwxyz0123456789';
+const DIGIT_CHARS = '0123456789';
+
+function pickRandomChars(source: string, length: number) {
+  return Array.from({ length }, () => source[Math.floor(Math.random() * source.length)]).join('');
+}
+
+export function generateStrongPassword() {
+  return `${pickRandomChars(UPPER_LOWER_CHARS, 4)}${pickRandomChars(DIGIT_CHARS, 5)}`;
+}
+
+export function generateSuggestedMailboxName() {
+  return normalizeMailboxId(`${pickRandomChars('abcdefghijklmnopqrstuvwxyz', 3)}${pickRandomChars(LOWER_ALNUM_CHARS, 5)}`);
+}
+
 export function normalizeMailboxId(value: string) {
   return value.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 24);
 }

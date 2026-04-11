@@ -8,6 +8,7 @@ import {
   markMessageRead,
 } from '../lib/api';
 import MailMessageTable from './MailMessageTable';
+import RegistrationHelperPanel from './RegistrationHelperPanel';
 import {
   INITIAL_SECONDS,
   TEMP_MAILBOX_MINUTES,
@@ -253,6 +254,8 @@ export default function TemporaryMailboxPanel() {
           </button>
         </div>
       </div>
+
+      <RegistrationHelperPanel />
 
       {errorText ? <p className="error-text">{errorText}</p> : null}
 
