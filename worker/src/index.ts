@@ -11,6 +11,70 @@ type ParsedAddress = {
   name?: string;
 };
 
+type ParsedAttachment = {
+  filename: string | null;
+  mimeType: string;
+  disposition: 'attachment' | 'inline' | null;
+  related?: boolean;
+  contentId?: string;
+  method?: string;
+  content: ArrayBuffer | Uint8Array | string;
+};
+
+type AttachmentSummary = {
+  filename: string;
+  mimeType: string;
+  disposition: 'attachment' | 'inline' | 'unknown';
+  contentId: string;
+  size: number;
+  isInline: boolean;
+  isCalendar: boolean;
+  method: string;
+};
+
+const MAX_CALENDAR_TEXT_LENGTH = 120_000;
+
+function getContentSize(content: ArrayBuffer | Uint8Array | string): number {
+  if (typeof content === 'string') {
+    return new TextEncoder().encode(content).length;
+  }
+
+  if (content instanceof ArrayBuffer) {
+    return content.byteLength;
+  }
+
+  return content.byteLength;
+}
+
+function asUtf8Text(content: ArrayBuffer | Uint8Array | string): string {
+  if (typeof content === 'string') {
+    return content;
+  }
+
+  if (content instanceof ArrayBuffer) {
+    return new TextDecoder().decode(new Uint8Array(content));
+  }
+
+  return new TextDecoder().decode(content);
+}
+
+function summarizeAttachment(attachment: ParsedAttachment): AttachmentSummary {
+  const disposition = attachment.disposition ?? 'unknown';
+  const mimeType = String(attachment.mimeType ?? 'application/octet-stream').toLowerCase();
+  const isInline = disposition === 'inline' || Boolean(attachment.related);
+
+  return {
+    filename: attachment.filename ?? '',
+    mimeType,
+    disposition,
+    contentId: attachment.contentId ?? '',
+    size: getContentSize(attachment.content),
+    isInline,
+    isCalendar: mimeType === 'text/calendar',
+    method: attachment.method ?? '',
+  };
+}
+
 function pickAddress(value: unknown, fallback = ''): string {
   if (typeof value === 'string') {
     return value.trim().toLowerCase();
@@ -53,7 +117,22 @@ export default {
         from: pickAddress(parsed.from, message.from),
         subject: typeof parsed.subject === 'string' ? parsed.subject : '',
         text: typeof parsed.text === 'string' ? parsed.text : '',
+        html: typeof parsed.html === 'string' ? parsed.html : '',
+        calendar: '',
+        attachments: [] as AttachmentSummary[],
       };
+
+      const attachments = Array.isArray(parsed.attachments)
+        ? (parsed.attachments as ParsedAttachment[])
+        : [];
+
+      payload.attachments = attachments.map((attachment) => summarizeAttachment(attachment));
+
+      const calendarAttachment = attachments.find((attachment) => String(attachment.mimeType ?? '').toLowerCase() === 'text/calendar');
+      if (calendarAttachment) {
+        const calendarText = asUtf8Text(calendarAttachment.content);
+        payload.calendar = calendarText.slice(0, MAX_CALENDAR_TEXT_LENGTH);
+      }
 
       const response = await fetch(env.API_WEBHOOK_URL, {
         method: 'POST',
