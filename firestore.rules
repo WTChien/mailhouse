@@ -1,0 +1,29 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function validMailboxData() {
+      return request.resource.data.keys().hasOnly(['mode', 'expireAt', 'createdAt', 'updatedAt'])
+        && (
+          !('mode' in request.resource.data)
+          || request.resource.data.mode == 'temporary'
+          || request.resource.data.mode == 'persistent'
+        )
+        && (
+          !('expireAt' in request.resource.data)
+          || request.resource.data.expireAt is timestamp
+          || request.resource.data.expireAt == null
+        );
+    }
+
+    match /mailboxes/{mailboxId} {
+      allow read: if true;
+      allow create, update: if validMailboxData();
+      allow delete: if true;
+
+      match /messages/{messageId} {
+        allow read: if true;
+        allow write: if false;
+      }
+    }
+  }
+}

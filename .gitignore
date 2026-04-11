@@ -1,0 +1,22 @@
+# Frontend
+frontend/node_modules/
+frontend/dist/
+
+# Worker
+worker/node_modules/
+worker/.wrangler/
+
+# Python
+backend/.venv/
+backend/__pycache__/
+*.pyc
+
+# Env files
+.env
+.env.local
+frontend/.env
+backend/.env
+worker/.dev.vars
+
+# Firebase secrets
+backend/serviceAccountKey.json

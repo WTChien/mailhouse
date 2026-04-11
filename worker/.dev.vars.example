@@ -1,0 +1,3 @@
+API_WEBHOOK_URL=http://127.0.0.1:8000/api/webhook/email
+MAIL_DOMAIN=gradaide.xyz
+WEBHOOK_SECRET=change_me_optional
