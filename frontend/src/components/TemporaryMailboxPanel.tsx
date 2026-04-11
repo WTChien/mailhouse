@@ -198,7 +198,7 @@ export default function TemporaryMailboxPanel() {
 
   const handleCleanup = async () => {
     try {
-      await cleanupReadMessages(24);
+      await cleanupReadMessages();
       if (mailboxId) {
         await syncMessages(mailboxId);
       }

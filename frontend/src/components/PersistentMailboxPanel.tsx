@@ -151,7 +151,7 @@ export default function PersistentMailboxPanel() {
 
   const handleCleanup = async () => {
     try {
-      await cleanupReadMessages(24);
+      await cleanupReadMessages();
       if (mailboxId) {
         await syncMessages(mailboxId);
       }

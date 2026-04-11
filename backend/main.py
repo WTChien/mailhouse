@@ -194,7 +194,7 @@ def delete_mailbox_messages(mailbox_ref: firestore.DocumentReference) -> None:
         batch.commit()
 
 
-def cleanup_mailboxes_and_messages(read_retention_hours: int = 24) -> dict[str, int]:
+def cleanup_mailboxes_and_messages(read_retention_hours: int = 0) -> dict[str, int]:
     now = datetime.now(timezone.utc)
     read_cutoff = now - timedelta(hours=read_retention_hours)
     deleted_messages = 0
@@ -210,7 +210,7 @@ def cleanup_mailboxes_and_messages(read_retention_hours: int = 24) -> dict[str, 
             message_data = message_doc.to_dict() or {}
             is_read = bool(message_data.get("isRead", False))
             read_at = to_utc_datetime(message_data.get("readAt"))
-            should_delete = is_read and read_at is not None and read_at <= read_cutoff
+            should_delete = is_read and (read_at is None or read_at <= read_cutoff)
 
             if should_delete or (mailbox_mode == "temporary" and expire_at is not None and expire_at <= now):
                 message_doc.reference.delete()
@@ -387,7 +387,7 @@ async def mark_message_read(mailbox_id: str, message_id: str, payload: ReadState
 
 
 @app.post("/api/cleanup")
-async def cleanup_messages(read_retention_hours: int = Query(default=24, ge=1, le=720)) -> dict[str, Any]:
+async def cleanup_messages(read_retention_hours: int = Query(default=0, ge=0, le=720)) -> dict[str, Any]:
     result = cleanup_mailboxes_and_messages(read_retention_hours=read_retention_hours)
     return {
         "status": "ok",
