@@ -10,15 +10,28 @@ Incoming email
 -> Cloudflare Email Worker
 -> POST JSON to FastAPI
 -> FastAPI validates mailbox + writes Firestore
--> React listens with onSnapshot and updates instantly
+-> React fetches mailbox data from FastAPI only
 ```
+
+## Core features
+
+- **30 分鐘信箱**
+  - 自動建立隨機信箱
+  - 切換 navbar 或重新整理頁面都會保留目前信箱地址
+  - 只有在 **30 分鐘到期** 或你手動按下 **產生新信箱** 時才會重設
+- **保留信箱**
+  - 可指定並保存自己想用的名稱
+  - 重新整理後仍會保留已保存的清單
+  - 可手動載入、複製與刪除
 
 ## Project structure
 
-- `worker/src/index.ts`: Cloudflare Email Worker that parses and forwards email JSON
-- `backend/main.py`: FastAPI webhook that stores valid messages in Firestore
-- `frontend/src/components/TempMail.tsx`: temporary mailbox UI and realtime inbox
-- `frontend/src/lib/firebase.ts`: Firebase initialization
+- `worker/src/index.ts`: Cloudflare Email Worker that parses and forwards incoming email JSON
+- `backend/main.py`: FastAPI app for webhook handling, mailbox management, read/unread state, and cleanup
+- `frontend/src/components/TemporaryMailboxPanel.tsx`: 30-minute mailbox UI
+- `frontend/src/components/PersistentMailboxPanel.tsx`: persistent mailbox UI
+- `frontend/src/components/MailMessageTable.tsx`: shared message table with loading states
+- `frontend/src/lib/api.ts`: frontend API client for FastAPI
 - `firestore.rules`: starter Firestore security rules
 
 ## Firestore schema
@@ -35,14 +48,11 @@ mailboxes/{email_prefix}/messages/{message_id}
   subject: string
   text: string
   receivedAt: Timestamp
+  isRead: boolean
+  readAt: Timestamp | null
 ```
 
-## Mailbox modes
-
-- **Temporary mode**: auto-generates a random mailbox and expires after 10 minutes.
-- **Persistent mode**: lets you keep a mailbox name such as `hello123@gradaide.xyz` until you manually delete it.
-
-## Quick start script
+## Quick start
 
 From the project root you can start the backend and frontend together in the **same terminal** and see both logs inline:
 
@@ -69,7 +79,7 @@ Then set these values in `worker/.dev.vars`:
 
 - `API_WEBHOOK_URL=https://your-backend-domain/api/webhook/email`
 - `MAIL_DOMAIN=gradaide.xyz`
-- `WEBHOOK_SECRET=change_me_optional`
+- `WEBHOOK_SECRET=your_shared_secret`
 
 After that, deploy the worker and bind it to the catch-all route for `gradaide.xyz` in Cloudflare Email Routing.
 
@@ -84,7 +94,12 @@ Copy-Item .env.example .env
 uvicorn main:app --reload --port 8000 --env-file .env
 ```
 
-Set either `FIREBASE_SERVICE_ACCOUNT_JSON` **or** `FIREBASE_CREDENTIALS_PATH`, and keep `MAIL_DOMAIN=gradaide.xyz`.
+Set these values in `backend/.env` as needed:
+
+- `MAIL_DOMAIN=gradaide.xyz`
+- `WEBHOOK_SECRET=your_shared_secret`
+- `TEMP_MAILBOX_MINUTES=30`
+- `FIREBASE_SERVICE_ACCOUNT_JSON=...` **or** `FIREBASE_CREDENTIALS_PATH=...`
 
 ### Firebase key in `.env`
 
@@ -99,14 +114,22 @@ npm install
 npm run dev
 ```
 
-The frontend now talks only to FastAPI. Set `VITE_API_BASE_URL=http://127.0.0.1:8000` in `frontend/.env` and keep `VITE_MAIL_DOMAIN=gradaide.xyz`.
+Set these values in `frontend/.env`:
 
-## API target
+- `VITE_API_BASE_URL=http://127.0.0.1:8000`
+- `VITE_MAIL_DOMAIN=gradaide.xyz`
 
-The backend now also supports:
+## API overview
 
-- `PATCH /api/mailboxes/{mailbox_id}/messages/{message_id}/read` — mark a message read/unread
-- `POST /api/cleanup?read_retention_hours=24` — remove read mail older than the retention window and clear expired temporary mailboxes
+Main endpoints:
+
+- `POST /api/mailboxes/temp` — create a 30-minute mailbox
+- `POST /api/mailboxes/persistent` — create or load a persistent mailbox
+- `POST /api/mailboxes/{mailbox_id}/extend` — extend the current temporary mailbox
+- `GET /api/mailboxes/{mailbox_id}/messages` — fetch mailbox messages
+- `PATCH /api/mailboxes/{mailbox_id}/messages/{message_id}/read` — mark a message as read/unread
+- `POST /api/cleanup?read_retention_hours=24` — remove old read mail and expired temporary mailboxes
+- `DELETE /api/mailboxes/{mailbox_id}` — delete a mailbox
 
 The Email Worker posts JSON to:
 
@@ -125,6 +148,8 @@ Example payload:
 }
 ```
 
-## Firestore rules note
+## Notes
 
-A starter rule set is included in `firestore.rules`. It allows the frontend to create/update mailbox expiry and read messages, while keeping message writes server-side via Firebase Admin SDK. Tighten these rules before production use.
+- The frontend now talks **only to FastAPI**; it does not access Firestore directly.
+- Temporary mailbox state is saved in browser `localStorage`, so a page refresh will keep the current mailbox until expiry.
+- A starter rule set is included in `firestore.rules`; tighten it further before production use.

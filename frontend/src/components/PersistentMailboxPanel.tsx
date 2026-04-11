@@ -10,6 +10,8 @@ import {
 import MailMessageTable from './MailMessageTable';
 import { SAVED_MAILBOXES_KEY, normalizeMailboxId, readSavedMailboxes, type MailMessage } from './mailboxUtils';
 
+type BusyAction = 'open' | 'delete' | null;
+
 export default function PersistentMailboxPanel() {
   const [mailboxId, setMailboxId] = useState('');
   const [requestedMailboxId, setRequestedMailboxId] = useState('');
@@ -17,10 +19,12 @@ export default function PersistentMailboxPanel() {
   const [statusText, setStatusText] = useState('輸入名稱後即可建立或載入保留信箱');
   const [errorText, setErrorText] = useState('');
   const [copied, setCopied] = useState(false);
-  const [isBusy, setIsBusy] = useState(false);
+  const [busyAction, setBusyAction] = useState<BusyAction>(null);
+  const [busyMailboxTarget, setBusyMailboxTarget] = useState('');
   const [savedMailboxes, setSavedMailboxes] = useState<string[]>(() => readSavedMailboxes());
 
   const emailAddress = useMemo(() => (mailboxId ? `${mailboxId}@${MAIL_DOMAIN}` : ''), [mailboxId]);
+  const isBusy = busyAction !== null;
 
   const syncMessages = async (targetMailboxId: string) => {
     try {
@@ -39,7 +43,8 @@ export default function PersistentMailboxPanel() {
       return;
     }
 
-    setIsBusy(true);
+    setBusyAction('open');
+    setBusyMailboxTarget(prefix);
 
     try {
       const data = await createOrLoadPersistentMailbox(prefix);
@@ -54,7 +59,8 @@ export default function PersistentMailboxPanel() {
       console.error(error);
       setErrorText(error instanceof Error ? error.message : '建立或載入保留信箱失敗。');
     } finally {
-      setIsBusy(false);
+      setBusyAction(null);
+      setBusyMailboxTarget('');
     }
   };
 
@@ -63,7 +69,8 @@ export default function PersistentMailboxPanel() {
       return;
     }
 
-    setIsBusy(true);
+    setBusyAction('delete');
+    setBusyMailboxTarget(targetMailboxId);
 
     try {
       await deleteMailbox(targetMailboxId);
@@ -81,7 +88,8 @@ export default function PersistentMailboxPanel() {
       console.error(error);
       setErrorText(error instanceof Error ? error.message : '刪除信箱失敗，請稍後再試。');
     } finally {
-      setIsBusy(false);
+      setBusyAction(null);
+      setBusyMailboxTarget('');
     }
   };
 
@@ -153,6 +161,10 @@ export default function PersistentMailboxPanel() {
     }
   };
 
+  const normalizedRequestedMailboxId = normalizeMailboxId(requestedMailboxId);
+  const isOpeningRequested = busyAction === 'open' && busyMailboxTarget === normalizedRequestedMailboxId;
+  const isDeletingCurrent = busyAction === 'delete' && busyMailboxTarget === mailboxId;
+
   return (
     <section className="mail-card">
       <div className="mail-card__header">
@@ -164,9 +176,10 @@ export default function PersistentMailboxPanel() {
       </div>
 
       <div className="mail-insights two-col">
-        <article className="insight-card">
-          <span>目前地址</span>
-          <strong>{emailAddress || '尚未選擇'}</strong>
+        <article className="insight-card insight-card--accent">
+          <span>目前已載入信箱</span>
+          <strong>{emailAddress || '尚未載入任何保留信箱'}</strong>
+          <p className="muted insight-card__hint">目前查看、收信與清理的都是這個信箱。</p>
         </article>
         <article className="insight-card">
           <span>已保存名稱</span>
@@ -184,13 +197,19 @@ export default function PersistentMailboxPanel() {
             onChange={(event) => setRequestedMailboxId(normalizeMailboxId(event.target.value))}
           />
           <button type="button" onClick={() => void openPersistentMailbox()} disabled={isBusy}>
-            建立 / 載入
+            <span className="button-content">
+              {isOpeningRequested ? <span className="button-spinner" aria-hidden="true" /> : null}
+              <span>{isOpeningRequested ? '載入中...' : '建立 / 載入'}</span>
+            </span>
           </button>
           <button type="button" className="secondary" onClick={handleCopy} disabled={!emailAddress}>
-            {copied ? '已複製' : '複製信箱'}
+            {copied ? '已複製' : '複製目前信箱'}
           </button>
           <button type="button" className="danger" onClick={() => void handleDeleteMailbox()} disabled={!mailboxId || isBusy}>
-            刪除此信箱
+            <span className="button-content">
+              {isDeletingCurrent ? <span className="button-spinner" aria-hidden="true" /> : null}
+              <span>{isDeletingCurrent ? '刪除中...' : '刪除此信箱'}</span>
+            </span>
           </button>
         </div>
       </div>
@@ -205,19 +224,30 @@ export default function PersistentMailboxPanel() {
           <div className="empty-state">目前還沒有保存任何保留信箱。</div>
         ) : (
           <div className="saved-list">
-            {savedMailboxes.map((savedMailbox) => (
-              <div className="saved-chip" key={savedMailbox}>
-                <strong>{savedMailbox}@{MAIL_DOMAIN}</strong>
-                <div className="saved-chip__actions">
-                  <button type="button" className="secondary small" onClick={() => void openPersistentMailbox(savedMailbox)} disabled={isBusy}>
-                    載入
-                  </button>
-                  <button type="button" className="danger small" onClick={() => void handleDeleteMailbox(savedMailbox)} disabled={isBusy}>
-                    刪除
-                  </button>
+            {savedMailboxes.map((savedMailbox) => {
+              const isLoadingSaved = busyAction === 'open' && busyMailboxTarget === savedMailbox;
+              const isDeletingSaved = busyAction === 'delete' && busyMailboxTarget === savedMailbox;
+
+              return (
+                <div className="saved-chip" key={savedMailbox}>
+                  <strong>{savedMailbox}@{MAIL_DOMAIN}</strong>
+                  <div className="saved-chip__actions">
+                    <button type="button" className="secondary small" onClick={() => void openPersistentMailbox(savedMailbox)} disabled={isBusy}>
+                      <span className="button-content">
+                        {isLoadingSaved ? <span className="button-spinner" aria-hidden="true" /> : null}
+                        <span>{isLoadingSaved ? '載入中...' : '載入'}</span>
+                      </span>
+                    </button>
+                    <button type="button" className="danger small" onClick={() => void handleDeleteMailbox(savedMailbox)} disabled={isBusy}>
+                      <span className="button-content">
+                        {isDeletingSaved ? <span className="button-spinner" aria-hidden="true" /> : null}
+                        <span>{isDeletingSaved ? '刪除中...' : '刪除'}</span>
+                      </span>
+                    </button>
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>

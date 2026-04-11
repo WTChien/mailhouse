@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import type { MailMessage } from './mailboxUtils';
 import { formatPreview, formatReceivedAt } from './mailboxUtils';
 
@@ -9,6 +10,35 @@ type Props = {
 };
 
 export default function MailMessageTable({ messages, onMarkRead, onCleanup, cleanupLabel = '清理已讀郵件' }: Props) {
+  const [pendingMessageId, setPendingMessageId] = useState<string | null>(null);
+  const [isCleaningUp, setIsCleaningUp] = useState(false);
+
+  const handleCleanupClick = async () => {
+    if (!onCleanup || isCleaningUp) {
+      return;
+    }
+
+    setIsCleaningUp(true);
+    try {
+      await onCleanup();
+    } finally {
+      setIsCleaningUp(false);
+    }
+  };
+
+  const handleMarkReadClick = async (messageId: string, isRead: boolean) => {
+    if (!onMarkRead || pendingMessageId) {
+      return;
+    }
+
+    setPendingMessageId(messageId);
+    try {
+      await onMarkRead(messageId, isRead);
+    } finally {
+      setPendingMessageId(null);
+    }
+  };
+
   return (
     <div className="message-section">
       <div className="message-section__header">
@@ -16,8 +46,11 @@ export default function MailMessageTable({ messages, onMarkRead, onCleanup, clea
         <div className="message-section__actions">
           <span>{messages.length} 封</span>
           {onCleanup ? (
-            <button type="button" className="secondary small" onClick={() => void onCleanup()}>
-              {cleanupLabel}
+            <button type="button" className="secondary small" onClick={() => void handleCleanupClick()} disabled={isCleaningUp || pendingMessageId !== null}>
+              <span className="button-content">
+                {isCleaningUp ? <span className="button-spinner" aria-hidden="true" /> : null}
+                <span>{isCleaningUp ? '清理中...' : cleanupLabel}</span>
+              </span>
             </button>
           ) : null}
         </div>
@@ -38,27 +71,35 @@ export default function MailMessageTable({ messages, onMarkRead, onCleanup, clea
               </tr>
             </thead>
             <tbody>
-              {messages.map((message) => (
-                <tr key={message.id} className={message.isRead ? 'row-read' : ''}>
-                  <td>{formatReceivedAt(message.receivedAt)}</td>
-                  <td>{message.from || 'unknown'}</td>
-                  <td>{message.subject || '(no subject)'}</td>
-                  <td>{formatPreview(message.text)}</td>
-                  <td>
-                    {onMarkRead ? (
-                      <button
-                        type="button"
-                        className="secondary small"
-                        onClick={() => void onMarkRead(message.id, !message.isRead)}
-                      >
-                        {message.isRead ? '標示未讀' : '標示已讀'}
-                      </button>
-                    ) : (
-                      <span>{message.isRead ? '已讀' : '未讀'}</span>
-                    )}
-                  </td>
-                </tr>
-              ))}
+              {messages.map((message) => {
+                const isUpdating = pendingMessageId === message.id;
+
+                return (
+                  <tr key={message.id} className={message.isRead ? 'row-read' : ''}>
+                    <td>{formatReceivedAt(message.receivedAt)}</td>
+                    <td>{message.from || 'unknown'}</td>
+                    <td>{message.subject || '(no subject)'}</td>
+                    <td>{formatPreview(message.text)}</td>
+                    <td>
+                      {onMarkRead ? (
+                        <button
+                          type="button"
+                          className="secondary small"
+                          onClick={() => void handleMarkReadClick(message.id, !message.isRead)}
+                          disabled={isUpdating || isCleaningUp}
+                        >
+                          <span className="button-content">
+                            {isUpdating ? <span className="button-spinner" aria-hidden="true" /> : null}
+                            <span>{isUpdating ? '更新中...' : message.isRead ? '標示未讀' : '標示已讀'}</span>
+                          </span>
+                        </button>
+                      ) : (
+                        <span>{message.isRead ? '已讀' : '未讀'}</span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

@@ -73,6 +73,29 @@ button:disabled {
   opacity: 0.6;
 }
 
+.button-content {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+}
+
+.button-spinner {
+  width: 0.9rem;
+  height: 0.9rem;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  display: inline-block;
+  animation: button-spin 0.75s linear infinite;
+}
+
+@keyframes button-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 input {
   flex: 1 1 260px;
   min-width: 240px;
@@ -246,6 +269,24 @@ input:focus {
 .insight-card strong {
   color: #ffffff;
   font-size: 1.1rem;
+}
+
+.insight-card--accent {
+  background: linear-gradient(135deg, rgba(108, 99, 255, 0.2) 0%, rgba(76, 153, 255, 0.12) 100%);
+  border-color: rgba(124, 116, 255, 0.38);
+  box-shadow: 0 16px 36px rgba(85, 90, 255, 0.18);
+}
+
+.insight-card--accent strong {
+  display: block;
+  font-size: 1.22rem;
+  color: #ffffff;
+  word-break: break-word;
+}
+
+.insight-card__hint {
+  margin: 0.45rem 0 0;
+  font-size: 0.85rem;
 }
 
 .field-label {

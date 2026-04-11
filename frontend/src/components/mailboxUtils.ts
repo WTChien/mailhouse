@@ -7,9 +7,16 @@ export type MailMessage = {
   isRead?: boolean;
 };
 
-export const TEN_MINUTES_MS = 10 * 60 * 1000;
-export const INITIAL_SECONDS = 10 * 60;
+export const TEMP_MAILBOX_MINUTES = 30;
+export const TEMP_MAILBOX_MS = TEMP_MAILBOX_MINUTES * 60 * 1000;
+export const INITIAL_SECONDS = TEMP_MAILBOX_MINUTES * 60;
 export const SAVED_MAILBOXES_KEY = 'mailhouse.savedMailboxes';
+export const TEMP_MAILBOX_STATE_KEY = 'mailhouse.temporaryMailbox';
+
+export type TemporaryMailboxState = {
+  mailboxId: string;
+  expireAt: string;
+};
 
 export function normalizeMailboxId(value: string) {
   return value.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 24);
@@ -35,6 +42,45 @@ export function readSavedMailboxes() {
   } catch {
     return [] as string[];
   }
+}
+
+export function readTemporaryMailboxState() {
+  if (typeof window === 'undefined') {
+    return null as TemporaryMailboxState | null;
+  }
+
+  try {
+    const rawValue = window.localStorage.getItem(TEMP_MAILBOX_STATE_KEY);
+    const parsed = rawValue ? (JSON.parse(rawValue) as Partial<TemporaryMailboxState>) : null;
+    const mailboxId = normalizeMailboxId(parsed?.mailboxId ?? '');
+    const expireAt = typeof parsed?.expireAt === 'string' ? parsed.expireAt : '';
+    const expiresAtDate = new Date(expireAt);
+
+    if (!mailboxId || Number.isNaN(expiresAtDate.getTime()) || expiresAtDate.getTime() <= Date.now()) {
+      window.localStorage.removeItem(TEMP_MAILBOX_STATE_KEY);
+      return null;
+    }
+
+    return { mailboxId, expireAt };
+  } catch {
+    return null as TemporaryMailboxState | null;
+  }
+}
+
+export function writeTemporaryMailboxState(state: TemporaryMailboxState) {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  window.localStorage.setItem(TEMP_MAILBOX_STATE_KEY, JSON.stringify(state));
+}
+
+export function clearTemporaryMailboxState() {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  window.localStorage.removeItem(TEMP_MAILBOX_STATE_KEY);
 }
 
 export function formatCountdown(seconds: number) {

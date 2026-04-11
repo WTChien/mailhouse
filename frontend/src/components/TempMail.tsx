@@ -3,7 +3,7 @@ import PersistentMailboxPanel from './PersistentMailboxPanel';
 import TemporaryMailboxPanel from './TemporaryMailboxPanel';
 
 const tabs = [
-  { id: 'temporary', label: '10 分鐘信箱' },
+  { id: 'temporary', label: '30 分鐘信箱' },
   { id: 'persistent', label: '保留信箱' },
 ] as const;
 
@@ -27,7 +27,12 @@ export default function TempMail() {
         ))}
       </div>
 
-      {activeTab === 'temporary' ? <TemporaryMailboxPanel /> : <PersistentMailboxPanel />}
+      <div hidden={activeTab !== 'temporary'} aria-hidden={activeTab !== 'temporary'}>
+        <TemporaryMailboxPanel />
+      </div>
+      <div hidden={activeTab !== 'persistent'} aria-hidden={activeTab !== 'persistent'}>
+        <PersistentMailboxPanel />
+      </div>
     </section>
   );
 }

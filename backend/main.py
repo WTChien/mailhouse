@@ -27,6 +27,11 @@ CORS_ORIGINS = [
 ]
 RANDOM_CHARS = string.ascii_lowercase + string.digits
 
+try:
+    TEMP_MAILBOX_MINUTES = max(1, int(os.getenv("TEMP_MAILBOX_MINUTES", "30")))
+except ValueError:
+    TEMP_MAILBOX_MINUTES = 30
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ORIGINS or ["http://localhost:5173", "http://127.0.0.1:5173"],
@@ -233,7 +238,7 @@ async def create_temporary_mailbox() -> dict[str, Any]:
         mailbox_ref = db.collection("mailboxes").document(prefix)
 
         if not mailbox_ref.get().exists:
-            expire_at = datetime.now(timezone.utc) + timedelta(minutes=10)
+            expire_at = datetime.now(timezone.utc) + timedelta(minutes=TEMP_MAILBOX_MINUTES)
             mailbox_ref.set(
                 {
                     "mode": "temporary",
@@ -309,7 +314,7 @@ async def extend_temporary_mailbox(mailbox_id: str) -> dict[str, Any]:
     if mailbox_mode != "temporary":
         raise HTTPException(status_code=400, detail="only temporary mailboxes can be extended")
 
-    expire_at = datetime.now(timezone.utc) + timedelta(minutes=10)
+    expire_at = datetime.now(timezone.utc) + timedelta(minutes=TEMP_MAILBOX_MINUTES)
     mailbox_ref.set(
         {
             "mode": "temporary",
