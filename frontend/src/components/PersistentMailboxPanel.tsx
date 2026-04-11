@@ -13,7 +13,11 @@ import { SAVED_MAILBOXES_KEY, normalizeMailboxId, readSavedMailboxes, type MailM
 
 type BusyAction = 'open' | 'delete' | null;
 
-export default function PersistentMailboxPanel() {
+type PersistentMailboxPanelProps = {
+  requestedOpenMailboxId?: string;
+};
+
+export default function PersistentMailboxPanel({ requestedOpenMailboxId = '' }: PersistentMailboxPanelProps) {
   const [mailboxId, setMailboxId] = useState('');
   const [requestedMailboxId, setRequestedMailboxId] = useState('');
   const [messages, setMessages] = useState<MailMessage[]>([]);
@@ -118,10 +122,27 @@ export default function PersistentMailboxPanel() {
   }, [savedMailboxes]);
 
   useEffect(() => {
+    const targetMailboxId = normalizeMailboxId(requestedOpenMailboxId);
+    if (!targetMailboxId) {
+      return;
+    }
+
+    setRequestedMailboxId(targetMailboxId);
+
+    if (targetMailboxId !== mailboxId) {
+      void openPersistentMailbox(targetMailboxId);
+    }
+  }, [mailboxId, requestedOpenMailboxId]);
+
+  useEffect(() => {
+    if (normalizeMailboxId(requestedOpenMailboxId)) {
+      return;
+    }
+
     if (!mailboxId && savedMailboxes.length > 0) {
       void openPersistentMailbox(savedMailboxes[0]);
     }
-  }, [mailboxId, savedMailboxes]);
+  }, [mailboxId, requestedOpenMailboxId, savedMailboxes]);
 
   useEffect(() => {
     if (!mailboxId) {

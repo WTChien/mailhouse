@@ -11,6 +11,7 @@ type TabId = (typeof tabs)[number]['id'];
 
 export default function TempMail() {
   const [activeTab, setActiveTab] = useState<TabId>('temporary');
+  const [requestedPersistentMailboxId, setRequestedPersistentMailboxId] = useState('');
 
   return (
     <section className="tabs-shell">
@@ -28,10 +29,15 @@ export default function TempMail() {
       </div>
 
       <div hidden={activeTab !== 'temporary'} aria-hidden={activeTab !== 'temporary'}>
-        <TemporaryMailboxPanel />
+        <TemporaryMailboxPanel
+          onMoveToPersistent={(mailboxId) => {
+            setRequestedPersistentMailboxId(mailboxId);
+            setActiveTab('persistent');
+          }}
+        />
       </div>
       <div hidden={activeTab !== 'persistent'} aria-hidden={activeTab !== 'persistent'}>
-        <PersistentMailboxPanel />
+        <PersistentMailboxPanel requestedOpenMailboxId={requestedPersistentMailboxId} />
       </div>
     </section>
   );

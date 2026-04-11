@@ -298,6 +298,43 @@ async def create_or_load_persistent_mailbox(payload: PersistentMailboxPayload) -
     }
 
 
+@app.post("/api/mailboxes/{mailbox_id}/promote")
+async def promote_mailbox_to_persistent(mailbox_id: str) -> dict[str, Any]:
+    prefix = normalize_mailbox_id(mailbox_id or "")
+    if not prefix:
+        raise HTTPException(status_code=400, detail="invalid mailbox id")
+
+    mailbox_ref = db.collection("mailboxes").document(prefix)
+    mailbox_snapshot = mailbox_ref.get()
+    if not mailbox_snapshot.exists:
+        raise HTTPException(status_code=404, detail="mailbox not found")
+
+    mailbox_data = mailbox_snapshot.to_dict() or {}
+    is_active, reason = mailbox_is_active(mailbox_data)
+
+    if not is_active and reason == "mailbox_expired":
+        delete_mailbox_messages(mailbox_ref)
+        raise HTTPException(status_code=410, detail="temporary mailbox has already expired")
+
+    mailbox_ref.set(
+        {
+            "mode": "persistent",
+            "expireAt": None,
+            "createdAt": mailbox_data.get("createdAt", firestore.SERVER_TIMESTAMP),
+            "updatedAt": firestore.SERVER_TIMESTAMP,
+        },
+        merge=True,
+    )
+
+    return {
+        "status": "ok",
+        "mailboxId": prefix,
+        "email": f"{prefix}@{MAIL_DOMAIN}",
+        "mode": "persistent",
+        "expireAt": None,
+    }
+
+
 @app.post("/api/mailboxes/{mailbox_id}/extend")
 async def extend_temporary_mailbox(mailbox_id: str) -> dict[str, Any]:
     prefix = normalize_mailbox_id(mailbox_id or "")

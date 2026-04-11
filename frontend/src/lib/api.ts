@@ -53,6 +53,12 @@ export async function createOrLoadPersistentMailbox(mailboxId: string) {
   });
 }
 
+export async function promoteMailboxToPersistent(mailboxId: string) {
+  return apiRequest<MailboxResponse>(`/api/mailboxes/${mailboxId}/promote`, {
+    method: 'POST',
+  });
+}
+
 export async function extendTemporaryMailbox(mailboxId: string) {
   return apiRequest<MailboxResponse>(`/api/mailboxes/${mailboxId}/extend`, {
     method: 'POST',

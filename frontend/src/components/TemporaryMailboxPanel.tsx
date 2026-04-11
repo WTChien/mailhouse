@@ -6,6 +6,7 @@ import {
   extendTemporaryMailbox,
   getMailboxMessages,
   markMessageRead,
+  promoteMailboxToPersistent,
 } from '../lib/api';
 import MailMessageTable from './MailMessageTable';
 import RegistrationHelperPanel from './RegistrationHelperPanel';
@@ -19,9 +20,13 @@ import {
   type MailMessage,
 } from './mailboxUtils';
 
-type BusyAction = 'create' | 'extend' | null;
+type BusyAction = 'create' | 'extend' | 'move' | null;
 
-export default function TemporaryMailboxPanel() {
+type TemporaryMailboxPanelProps = {
+  onMoveToPersistent?: (mailboxId: string) => void;
+};
+
+export default function TemporaryMailboxPanel({ onMoveToPersistent }: TemporaryMailboxPanelProps) {
   const initialTemporaryMailbox = readTemporaryMailboxState();
   const [mailboxId, setMailboxId] = useState(initialTemporaryMailbox?.mailboxId ?? '');
   const [expireAt, setExpireAt] = useState<Date | null>(() =>
@@ -49,6 +54,7 @@ export default function TemporaryMailboxPanel() {
   const isBusy = busyAction !== null;
   const isCreating = busyAction === 'create';
   const isExtending = busyAction === 'extend';
+  const isMoving = busyAction === 'move';
 
   const syncMessages = async (targetMailboxId: string) => {
     try {
@@ -183,6 +189,30 @@ export default function TemporaryMailboxPanel() {
     }
   };
 
+  const handleMoveToPersistent = async () => {
+    if (!mailboxId || !expireAt) {
+      return;
+    }
+
+    setBusyAction('move');
+
+    try {
+      const data = await promoteMailboxToPersistent(mailboxId);
+      setExpireAt(data.expireAt ? new Date(data.expireAt) : null);
+      setSecondsLeft(INITIAL_SECONDS);
+      setDidAutoReset(true);
+      setStatusText('已移至保留信箱');
+      setErrorText('');
+      await syncMessages(data.mailboxId);
+      onMoveToPersistent?.(data.mailboxId);
+    } catch (error) {
+      console.error(error);
+      setErrorText(error instanceof Error ? error.message : '移至保留信箱失敗，請稍後再試。');
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
   const handleMarkRead = async (messageId: string, isRead: boolean) => {
     if (!mailboxId) {
       return;
@@ -209,7 +239,7 @@ export default function TemporaryMailboxPanel() {
     }
   };
 
-  const isExpired = secondsLeft === 0;
+  const isExpired = Boolean(expireAt) && secondsLeft === 0;
 
   return (
     <section className="mail-card">
@@ -227,7 +257,7 @@ export default function TemporaryMailboxPanel() {
         </article>
         <article className="insight-card">
           <span>剩餘時間</span>
-          <strong>{formatCountdown(secondsLeft)}</strong>
+          <strong>{mailboxId && !expireAt ? '已保留' : formatCountdown(secondsLeft)}</strong>
         </article>
       </div>
 
@@ -246,7 +276,13 @@ export default function TemporaryMailboxPanel() {
               <span>{isCreating ? '產生中...' : '產生新信箱'}</span>
             </span>
           </button>
-          <button type="button" className="secondary" onClick={handleExtend} disabled={!mailboxId || isBusy}>
+          <button type="button" className="secondary" onClick={handleMoveToPersistent} disabled={!mailboxId || !expireAt || isBusy}>
+            <span className="button-content">
+              {isMoving ? <span className="button-spinner" aria-hidden="true" /> : null}
+              <span>{isMoving ? '移動中...' : '移至保留信箱'}</span>
+            </span>
+          </button>
+          <button type="button" className="secondary" onClick={handleExtend} disabled={!mailboxId || !expireAt || isBusy}>
             <span className="button-content">
               {isExtending ? <span className="button-spinner" aria-hidden="true" /> : null}
               <span>{isExtending ? '延長中...' : `延長 ${TEMP_MAILBOX_MINUTES} 分鐘`}</span>
