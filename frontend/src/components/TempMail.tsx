@@ -3,8 +3,8 @@ import PersistentMailboxPanel from './PersistentMailboxPanel';
 import TemporaryMailboxPanel from './TemporaryMailboxPanel';
 
 const tabs = [
-  { id: 'temporary', label: '30 分鐘信箱' },
-  { id: 'persistent', label: '保留信箱' },
+  { id: 'temporary', label: '30 分鐘信箱', hint: '短時驗證收信' },
+  { id: 'persistent', label: '保留信箱', hint: '長期分類管理' },
 ] as const;
 
 type TabId = (typeof tabs)[number]['id'];
@@ -23,7 +23,8 @@ export default function TempMail() {
             className={`nav-tab ${activeTab === tab.id ? 'active' : ''}`}
             onClick={() => setActiveTab(tab.id)}
           >
-            {tab.label}
+            <span className="nav-tab__title">{tab.label}</span>
+            <span className="nav-tab__hint">{tab.hint}</span>
           </button>
         ))}
       </div>

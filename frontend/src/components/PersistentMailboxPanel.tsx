@@ -36,7 +36,7 @@ export default function PersistentMailboxPanel({ requestedOpenMailboxId = '' }: 
   const [busyAction, setBusyAction] = useState<BusyAction>(null);
   const [busyMailboxTarget, setBusyMailboxTarget] = useState('');
   const [savedMailboxes, setSavedMailboxes] = useState<SavedMailboxItem[]>(() => readSavedMailboxes());
-  const [tagFilter, setTagFilter] = useState('all');
+  const [activeTagNavbar, setActiveTagNavbar] = useState('all');
   const [savedListSort, setSavedListSort] = useState<SavedListSort>('recent');
   const [tagDraftByMailbox, setTagDraftByMailbox] = useState<Record<string, string>>({});
 
@@ -98,6 +98,10 @@ export default function PersistentMailboxPanel({ requestedOpenMailboxId = '' }: 
 
   const handleDeleteMailbox = async (targetMailboxId = mailboxId) => {
     if (!targetMailboxId) {
+      return;
+    }
+
+    if (typeof window !== 'undefined' && !window.confirm(`確定刪除保留信箱 ${targetMailboxId}@${MAIL_DOMAIN}？`)) {
       return;
     }
 
@@ -163,17 +167,17 @@ export default function PersistentMailboxPanel({ requestedOpenMailboxId = '' }: 
     return Array.from(
       new Set(
         savedMailboxes
-          .map((item) => item.tag)
+          .map((item) => normalizeMailboxTag(item.tag))
           .filter(Boolean),
       ),
     ).sort((a, b) => a.localeCompare(b, 'zh-Hant'));
   }, [savedMailboxes]);
 
   useEffect(() => {
-    if (tagFilter !== 'all' && !availableTags.includes(tagFilter)) {
-      setTagFilter('all');
+    if (activeTagNavbar !== 'all' && !availableTags.includes(activeTagNavbar)) {
+      setActiveTagNavbar('all');
     }
-  }, [availableTags, tagFilter]);
+  }, [activeTagNavbar, availableTags]);
 
   const savedMailboxMap = useMemo(() => {
     return new Map(savedMailboxes.map((item) => [item.mailboxId, item]));
@@ -186,7 +190,11 @@ export default function PersistentMailboxPanel({ requestedOpenMailboxId = '' }: 
     }
 
     setRequestedMailboxId(targetMailboxId);
-    setRequestedTag(savedMailboxMap.get(targetMailboxId)?.tag ?? '');
+    const currentTag = savedMailboxMap.get(targetMailboxId)?.tag ?? '';
+    setRequestedTag(currentTag);
+    if (currentTag) {
+      setActiveTagNavbar(currentTag);
+    }
 
     if (targetMailboxId !== mailboxId) {
       void openPersistentMailbox(targetMailboxId);
@@ -253,11 +261,11 @@ export default function PersistentMailboxPanel({ requestedOpenMailboxId = '' }: 
 
   const visibleSavedMailboxes = useMemo(() => {
     const filtered = savedMailboxes.filter((item) => {
-      if (tagFilter === 'all') {
+      if (activeTagNavbar === 'all') {
         return true;
       }
 
-      return item.tag === tagFilter;
+      return normalizeMailboxTag(item.tag) === activeTagNavbar;
     });
 
     return [...filtered].sort((a, b) => {
@@ -271,7 +279,11 @@ export default function PersistentMailboxPanel({ requestedOpenMailboxId = '' }: 
 
       return new Date(b.lastUsedAt).getTime() - new Date(a.lastUsedAt).getTime();
     });
-  }, [savedListSort, savedMailboxes, tagFilter]);
+  }, [activeTagNavbar, savedListSort, savedMailboxes]);
+
+  const navbarTabs = useMemo(() => {
+    return ['all', ...availableTags];
+  }, [availableTags]);
 
   const handleSaveTag = (targetMailboxId: string) => {
     const nextTag = normalizeMailboxTag(tagDraftByMailbox[targetMailboxId] ?? '');
@@ -280,6 +292,10 @@ export default function PersistentMailboxPanel({ requestedOpenMailboxId = '' }: 
     if (targetMailboxId === mailboxId) {
       setRequestedTag(nextTag);
     }
+  };
+
+  const applyTagDraft = (targetMailboxId: string) => {
+    handleSaveTag(targetMailboxId);
   };
 
   return (
@@ -304,8 +320,26 @@ export default function PersistentMailboxPanel({ requestedOpenMailboxId = '' }: 
         </article>
       </div>
 
+      <div className="account-navbar" role="tablist" aria-label="帳號分類">
+        {navbarTabs.map((item) => (
+          <button
+            key={item}
+            type="button"
+            className={`account-tab ${activeTagNavbar === item ? 'active' : ''}`}
+            onClick={() => {
+              setActiveTagNavbar(item);
+              if (item !== 'all') {
+                setRequestedTag(item);
+              }
+            }}
+          >
+            {item === 'all' ? '全部帳號' : item}
+          </button>
+        ))}
+      </div>
+
       <div className="mode-panel">
-        <p className="field-label">建立 / 載入保留信箱</p>
+        <p className="field-label">建立 / 載入保留信箱（目前分類：{activeTagNavbar === 'all' ? '全部帳號' : activeTagNavbar}）</p>
         <div className="input-row">
           <input
             type="text"
@@ -317,7 +351,7 @@ export default function PersistentMailboxPanel({ requestedOpenMailboxId = '' }: 
             type="text"
             className="tag-input"
             value={requestedTag}
-            placeholder="可選標籤，例如 註冊 / 金流 / 社群"
+            placeholder="標籤用途，例如 nintendo / 小米 / 社群"
             onChange={(event) => setRequestedTag(normalizeMailboxTag(event.target.value))}
           />
           <button type="button" onClick={() => void openPersistentMailbox()} disabled={isBusy}>
@@ -338,28 +372,24 @@ export default function PersistentMailboxPanel({ requestedOpenMailboxId = '' }: 
         </div>
       </div>
 
-      <RegistrationHelperPanel onApplyName={(value) => {
-        setRequestedMailboxId(value);
-        setErrorText('');
-      }} />
+      <RegistrationHelperPanel
+        profileScope={activeTagNavbar === 'all' ? 'general' : `tag:${activeTagNavbar}`}
+        persistDraft
+        defaultCollapsed
+        onApplyName={(value) => {
+          setRequestedMailboxId(value);
+          setErrorText('');
+        }}
+        onApplyTag={(value) => setRequestedTag(normalizeMailboxTag(value))}
+      />
 
       <div className="saved-mailboxes">
         <div className="message-section__header">
-          <h3>保留電子郵件清單</h3>
+          <h3>{activeTagNavbar === 'all' ? '保留電子郵件清單' : `${activeTagNavbar} 清單`}</h3>
           <span>{visibleSavedMailboxes.length} / {savedMailboxes.length} 個</span>
         </div>
 
         <div className="saved-list-toolbar">
-          <label>
-            <span className="field-label">標籤篩選</span>
-            <select value={tagFilter} onChange={(event) => setTagFilter(event.target.value)}>
-              <option value="all">全部標籤</option>
-              {availableTags.map((tag) => (
-                <option key={tag} value={tag}>{tag}</option>
-              ))}
-            </select>
-          </label>
-
           <label>
             <span className="field-label">排序</span>
             <select
@@ -399,15 +429,13 @@ export default function PersistentMailboxPanel({ requestedOpenMailboxId = '' }: 
                         const value = normalizeMailboxTag(event.target.value);
                         setTagDraftByMailbox((prev) => ({ ...prev, [savedMailbox.mailboxId]: value }));
                       }}
+                      onBlur={() => applyTagDraft(savedMailbox.mailboxId)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter') {
+                          applyTagDraft(savedMailbox.mailboxId);
+                        }
+                      }}
                     />
-                    <button
-                      type="button"
-                      className="secondary small"
-                      onClick={() => handleSaveTag(savedMailbox.mailboxId)}
-                      disabled={isBusy}
-                    >
-                      儲存標籤
-                    </button>
                   </div>
                   <div className="saved-chip__actions">
                     <button
