@@ -27,6 +27,13 @@ export const INITIAL_SECONDS = TEMP_MAILBOX_MINUTES * 60;
 export const SAVED_MAILBOXES_KEY = 'mailhouse.savedMailboxes';
 export const TEMP_MAILBOX_STATE_KEY = 'mailhouse.temporaryMailbox';
 
+export type SavedMailboxItem = {
+  mailboxId: string;
+  tag: string;
+  createdAt: string;
+  lastUsedAt: string;
+};
+
 export type TemporaryMailboxState = {
   mailboxId: string;
   expireAt: string;
@@ -52,26 +59,101 @@ export function normalizeMailboxId(value: string) {
   return value.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 24);
 }
 
+export function normalizeMailboxTag(value: string) {
+  return value.trim().replace(/\s+/g, ' ').slice(0, 28);
+}
+
+function normalizeSavedMailboxItem(item: Partial<SavedMailboxItem>, fallbackNow: string) {
+  const mailboxId = normalizeMailboxId(item.mailboxId ?? '');
+  if (!mailboxId) {
+    return null;
+  }
+
+  const createdAtValue = typeof item.createdAt === 'string' ? item.createdAt : fallbackNow;
+  const lastUsedAtValue = typeof item.lastUsedAt === 'string' ? item.lastUsedAt : createdAtValue;
+  const createdAt = Number.isNaN(new Date(createdAtValue).getTime()) ? fallbackNow : createdAtValue;
+  const lastUsedAt = Number.isNaN(new Date(lastUsedAtValue).getTime()) ? createdAt : lastUsedAtValue;
+
+  return {
+    mailboxId,
+    tag: normalizeMailboxTag(item.tag ?? ''),
+    createdAt,
+    lastUsedAt,
+  } satisfies SavedMailboxItem;
+}
+
 export function readSavedMailboxes() {
   if (typeof window === 'undefined') {
-    return [] as string[];
+    return [] as SavedMailboxItem[];
   }
 
   try {
     const rawValue = window.localStorage.getItem(SAVED_MAILBOXES_KEY);
     const parsed = rawValue ? (JSON.parse(rawValue) as unknown) : [];
+    const nowIso = new Date().toISOString();
 
     if (!Array.isArray(parsed)) {
-      return [] as string[];
+      return [] as SavedMailboxItem[];
     }
 
-    return parsed
-      .filter((item): item is string => typeof item === 'string')
-      .map((item) => normalizeMailboxId(item))
-      .filter(Boolean);
+    const normalizedItems = parsed
+      .map((item) => {
+        if (typeof item === 'string') {
+          const mailboxId = normalizeMailboxId(item);
+          if (!mailboxId) {
+            return null;
+          }
+
+          return {
+            mailboxId,
+            tag: '',
+            createdAt: nowIso,
+            lastUsedAt: nowIso,
+          } satisfies SavedMailboxItem;
+        }
+
+        if (!item || typeof item !== 'object') {
+          return null;
+        }
+
+        return normalizeSavedMailboxItem(item as Partial<SavedMailboxItem>, nowIso);
+      })
+      .filter((item): item is SavedMailboxItem => Boolean(item));
+
+    const deduped = new Map<string, SavedMailboxItem>();
+    normalizedItems.forEach((item) => {
+      const existing = deduped.get(item.mailboxId);
+      if (!existing) {
+        deduped.set(item.mailboxId, item);
+        return;
+      }
+
+      const createdAt = new Date(existing.createdAt).getTime() <= new Date(item.createdAt).getTime()
+        ? existing.createdAt
+        : item.createdAt;
+      const lastUsedAt = new Date(existing.lastUsedAt).getTime() >= new Date(item.lastUsedAt).getTime()
+        ? existing.lastUsedAt
+        : item.lastUsedAt;
+      deduped.set(item.mailboxId, {
+        mailboxId: item.mailboxId,
+        tag: item.tag || existing.tag,
+        createdAt,
+        lastUsedAt,
+      });
+    });
+
+    return Array.from(deduped.values());
   } catch {
-    return [] as string[];
+    return [] as SavedMailboxItem[];
   }
+}
+
+export function writeSavedMailboxes(items: SavedMailboxItem[]) {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  window.localStorage.setItem(SAVED_MAILBOXES_KEY, JSON.stringify(items));
 }
 
 export function readTemporaryMailboxState() {

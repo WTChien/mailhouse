@@ -4,7 +4,7 @@
   "main": "src/index.ts",
   "compatibility_date": "2026-04-11",
   "vars": {
-    "API_WEBHOOK_URL": "https://your-backend-domain/api/webhook/email",
+    "API_WEBHOOK_URL": "https://api.mailhouse.gradaide.xyz/api/webhook/email",
     "MAIL_DOMAIN": "gradaide.xyz"
   }
 }

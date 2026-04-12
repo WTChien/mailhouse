@@ -112,6 +112,21 @@ input:focus {
   box-shadow: 0 0 0 4px rgba(108, 99, 255, 0.14);
 }
 
+select {
+  min-width: 160px;
+  border-radius: 12px;
+  border: 1px solid rgba(138, 150, 210, 0.22);
+  padding: 0.65rem 0.8rem;
+  background: rgba(255, 255, 255, 0.03);
+  color: #eef3ff;
+  outline: none;
+}
+
+select:focus {
+  border-color: rgba(108, 99, 255, 0.9);
+  box-shadow: 0 0 0 4px rgba(108, 99, 255, 0.14);
+}
+
 #root {
   width: 100%;
 }
@@ -333,6 +348,49 @@ input:focus {
   border-radius: 16px;
   border: 1px solid rgba(138, 150, 210, 0.14);
   background: rgba(255, 255, 255, 0.025);
+}
+
+.saved-chip__main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.tag-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  border: 1px solid rgba(123, 111, 255, 0.35);
+  background: rgba(108, 99, 255, 0.14);
+  color: #e8e2ff;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.tag-input {
+  min-width: 180px;
+}
+
+.saved-list-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin: 0 0 0.8rem;
+}
+
+.saved-list-toolbar label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.saved-chip__tag-editor {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  flex-wrap: wrap;
 }
 
 .generator-panel {
@@ -569,7 +627,17 @@ tr.row-read td {
   }
 
   .nav-tab,
-  input {
+  input,
+  select {
     width: 100%;
+  }
+
+  .input-row input {
+    min-width: 0;
+    flex: 0 0 auto;
+  }
+
+  .saved-list-toolbar {
+    flex-direction: column;
   }
 }
