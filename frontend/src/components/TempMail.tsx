@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import PersistentMailboxPanel from './PersistentMailboxPanel';
+import PersistentMailboxPanel, { type PersistentPromotionRequest } from './PersistentMailboxPanel';
 import TemporaryMailboxPanel from './TemporaryMailboxPanel';
+import { readRegistrationRuntimeDraft } from './mailboxUtils';
 
 const tabs = [
   { id: 'temporary', label: '30 分鐘信箱', hint: '短時驗證收信' },
@@ -11,7 +12,7 @@ type TabId = (typeof tabs)[number]['id'];
 
 export default function TempMail() {
   const [activeTab, setActiveTab] = useState<TabId>('temporary');
-  const [requestedPersistentMailboxId, setRequestedPersistentMailboxId] = useState('');
+  const [requestedPromotion, setRequestedPromotion] = useState<PersistentPromotionRequest | null>(null);
 
   return (
     <section className="tabs-shell">
@@ -32,13 +33,17 @@ export default function TempMail() {
       <div hidden={activeTab !== 'temporary'} aria-hidden={activeTab !== 'temporary'}>
         <TemporaryMailboxPanel
           onMoveToPersistent={(mailboxId) => {
-            setRequestedPersistentMailboxId(mailboxId);
+            setRequestedPromotion({
+              mailboxId,
+              registrationDraft: readRegistrationRuntimeDraft(),
+              requestId: `${mailboxId}-${Date.now()}`,
+            });
             setActiveTab('persistent');
           }}
         />
       </div>
       <div hidden={activeTab !== 'persistent'} aria-hidden={activeTab !== 'persistent'}>
-        <PersistentMailboxPanel requestedOpenMailboxId={requestedPersistentMailboxId} />
+        <PersistentMailboxPanel requestedPromotion={requestedPromotion} />
       </div>
     </section>
   );

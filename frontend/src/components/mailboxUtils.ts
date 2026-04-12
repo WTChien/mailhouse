@@ -26,6 +26,8 @@ export const TEMP_MAILBOX_MS = TEMP_MAILBOX_MINUTES * 60 * 1000;
 export const INITIAL_SECONDS = TEMP_MAILBOX_MINUTES * 60;
 export const SAVED_MAILBOXES_KEY = 'mailhouse.savedMailboxes';
 export const TEMP_MAILBOX_STATE_KEY = 'mailhouse.temporaryMailbox';
+export const REGISTRATION_DRAFTS_KEY = 'mailhouse.registrationDrafts';
+export const REGISTRATION_RUNTIME_DRAFT_KEY = 'mailhouse.registrationRuntimeDraft';
 
 export type SavedMailboxItem = {
   mailboxId: string;
@@ -39,12 +41,34 @@ export type TemporaryMailboxState = {
   expireAt: string;
 };
 
+export type RegistrationDraft = {
+  generatedName: string;
+  generatedPassword: string;
+  updatedAt: string;
+};
+
 const UPPER_LOWER_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
 const LOWER_ALNUM_CHARS = 'abcdefghijklmnopqrstuvwxyz0123456789';
 const DIGIT_CHARS = '0123456789';
 
 function pickRandomChars(source: string, length: number) {
   return Array.from({ length }, () => source[Math.floor(Math.random() * source.length)]).join('');
+}
+
+function normalizeRegistrationDraft(value?: Partial<RegistrationDraft> | null) {
+  if (!value) {
+    return null as RegistrationDraft | null;
+  }
+
+  if (typeof value.generatedName !== 'string' || typeof value.generatedPassword !== 'string') {
+    return null as RegistrationDraft | null;
+  }
+
+  return {
+    generatedName: value.generatedName,
+    generatedPassword: value.generatedPassword,
+    updatedAt: typeof value.updatedAt === 'string' ? value.updatedAt : new Date().toISOString(),
+  } satisfies RegistrationDraft;
 }
 
 export function generateStrongPassword() {
@@ -193,6 +217,74 @@ export function clearTemporaryMailboxState() {
   }
 
   window.localStorage.removeItem(TEMP_MAILBOX_STATE_KEY);
+}
+
+export function readRegistrationDrafts() {
+  if (typeof window === 'undefined') {
+    return {} as Record<string, RegistrationDraft>;
+  }
+
+  try {
+    const raw = window.localStorage.getItem(REGISTRATION_DRAFTS_KEY);
+    const parsed = raw ? (JSON.parse(raw) as unknown) : {};
+
+    if (!parsed || typeof parsed !== 'object') {
+      return {} as Record<string, RegistrationDraft>;
+    }
+
+    return Object.entries(parsed as Record<string, Partial<RegistrationDraft>>).reduce<Record<string, RegistrationDraft>>((acc, [scope, draft]) => {
+      const normalizedDraft = normalizeRegistrationDraft(draft);
+      if (normalizedDraft) {
+        acc[scope] = normalizedDraft;
+      }
+      return acc;
+    }, {});
+  } catch {
+    return {} as Record<string, RegistrationDraft>;
+  }
+}
+
+export function writeRegistrationDraft(scope: string, draft: RegistrationDraft) {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  const drafts = readRegistrationDrafts();
+  drafts[scope] = draft;
+  window.localStorage.setItem(REGISTRATION_DRAFTS_KEY, JSON.stringify(drafts));
+}
+
+export function readRegistrationRuntimeDraft() {
+  if (typeof window === 'undefined') {
+    return null as RegistrationDraft | null;
+  }
+
+  try {
+    const raw = window.localStorage.getItem(REGISTRATION_RUNTIME_DRAFT_KEY);
+    if (!raw) {
+      return null;
+    }
+
+    return normalizeRegistrationDraft(JSON.parse(raw) as Partial<RegistrationDraft>);
+  } catch {
+    return null as RegistrationDraft | null;
+  }
+}
+
+export function writeRegistrationRuntimeDraft(draft: RegistrationDraft) {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  window.localStorage.setItem(REGISTRATION_RUNTIME_DRAFT_KEY, JSON.stringify(draft));
+}
+
+export function clearRegistrationRuntimeDraft() {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  window.localStorage.removeItem(REGISTRATION_RUNTIME_DRAFT_KEY);
 }
 
 export function formatCountdown(seconds: number) {

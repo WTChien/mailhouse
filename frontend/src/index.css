@@ -493,6 +493,50 @@ select:focus {
   min-width: 84px;
 }
 
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.2rem;
+  background: rgba(4, 10, 18, 0.72);
+  backdrop-filter: blur(8px);
+}
+
+.modal-card {
+  width: min(680px, 100%);
+  padding: 1rem;
+  border-radius: 22px;
+  border: 1px solid rgba(108, 145, 197, 0.34);
+  background: linear-gradient(180deg, rgba(10, 23, 40, 0.97) 0%, rgba(8, 18, 33, 0.97) 100%);
+  box-shadow: 0 24px 60px rgba(1, 9, 22, 0.7);
+}
+
+.modal-copy {
+  margin: 0 0 0.9rem;
+}
+
+.modal-tag-list {
+  display: flex;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.9rem;
+}
+
+.tag-choice.active {
+  border-color: rgba(148, 201, 255, 0.55);
+  background: rgba(36, 106, 191, 0.28);
+  color: #ffffff;
+}
+
+.modal-actions-row {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
 .message-preview-cell,
 .message-row-actions {
   display: flex;
@@ -709,5 +753,10 @@ tr.row-read td {
   .account-tab {
     width: 100%;
     justify-content: flex-start;
+  }
+
+  .modal-card,
+  .modal-actions-row {
+    width: 100%;
   }
 }

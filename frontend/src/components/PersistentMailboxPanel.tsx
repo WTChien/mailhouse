@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   cleanupReadMessages,
   createOrLoadPersistentMailbox,
@@ -15,17 +15,24 @@ import {
   readSavedMailboxes,
   writeSavedMailboxes,
   type MailMessage,
+  type RegistrationDraft,
   type SavedMailboxItem,
 } from './mailboxUtils';
 
 type BusyAction = 'open' | 'delete' | null;
 type SavedListSort = 'recent' | 'name' | 'tag';
 
-type PersistentMailboxPanelProps = {
-  requestedOpenMailboxId?: string;
+export type PersistentPromotionRequest = {
+  mailboxId: string;
+  registrationDraft: RegistrationDraft | null;
+  requestId: string;
 };
 
-export default function PersistentMailboxPanel({ requestedOpenMailboxId = '' }: PersistentMailboxPanelProps) {
+type PersistentMailboxPanelProps = {
+  requestedPromotion?: PersistentPromotionRequest | null;
+};
+
+export default function PersistentMailboxPanel({ requestedPromotion = null }: PersistentMailboxPanelProps) {
   const [mailboxId, setMailboxId] = useState('');
   const [requestedMailboxId, setRequestedMailboxId] = useState('');
   const [requestedTag, setRequestedTag] = useState('');
@@ -39,6 +46,11 @@ export default function PersistentMailboxPanel({ requestedOpenMailboxId = '' }: 
   const [activeTagNavbar, setActiveTagNavbar] = useState('all');
   const [savedListSort, setSavedListSort] = useState<SavedListSort>('recent');
   const [tagDraftByMailbox, setTagDraftByMailbox] = useState<Record<string, string>>({});
+  const [promotionMailboxId, setPromotionMailboxId] = useState('');
+  const [promotionTagDraft, setPromotionTagDraft] = useState('');
+  const [promotionDraftOverride, setPromotionDraftOverride] = useState<RegistrationDraft | null>(null);
+  const [promotionDraftKey, setPromotionDraftKey] = useState('');
+  const handledPromotionRequestIdRef = useRef('');
 
   const emailAddress = useMemo(() => (mailboxId ? `${mailboxId}@${MAIL_DOMAIN}` : ''), [mailboxId]);
   const isBusy = busyAction !== null;
@@ -57,7 +69,7 @@ export default function PersistentMailboxPanel({ requestedOpenMailboxId = '' }: 
     const prefix = normalizeMailboxId(inputValue ?? requestedMailboxId);
     if (prefix.length < 3) {
       setErrorText('保留信箱名稱至少需要 3 個英數字。');
-      return;
+      return false;
     }
 
     const normalizedTag = normalizeMailboxTag(tagValue ?? requestedTag);
@@ -87,9 +99,11 @@ export default function PersistentMailboxPanel({ requestedOpenMailboxId = '' }: 
       setStatusText('保留信箱可用中');
       setErrorText('');
       await syncMessages(data.mailboxId);
+      return true;
     } catch (error) {
       console.error(error);
       setErrorText(error instanceof Error ? error.message : '建立或載入保留信箱失敗。');
+      return false;
     } finally {
       setBusyAction(null);
       setBusyMailboxTarget('');
@@ -174,32 +188,42 @@ export default function PersistentMailboxPanel({ requestedOpenMailboxId = '' }: 
   }, [savedMailboxes]);
 
   useEffect(() => {
-    if (activeTagNavbar !== 'all' && !availableTags.includes(activeTagNavbar)) {
+    if (
+      activeTagNavbar !== 'all'
+      && activeTagNavbar !== normalizeMailboxTag(requestedTag)
+      && !availableTags.includes(activeTagNavbar)
+    ) {
       setActiveTagNavbar('all');
     }
-  }, [activeTagNavbar, availableTags]);
+  }, [activeTagNavbar, availableTags, requestedTag]);
 
   const savedMailboxMap = useMemo(() => {
     return new Map(savedMailboxes.map((item) => [item.mailboxId, item]));
   }, [savedMailboxes]);
 
   useEffect(() => {
-    const targetMailboxId = normalizeMailboxId(requestedOpenMailboxId);
+    if (!requestedPromotion?.requestId || handledPromotionRequestIdRef.current === requestedPromotion.requestId) {
+      return;
+    }
+
+    const targetMailboxId = normalizeMailboxId(requestedPromotion.mailboxId);
     if (!targetMailboxId) {
       return;
     }
 
+    handledPromotionRequestIdRef.current = requestedPromotion.requestId;
+
     setRequestedMailboxId(targetMailboxId);
     const currentTag = savedMailboxMap.get(targetMailboxId)?.tag ?? '';
     setRequestedTag(currentTag);
-    if (currentTag) {
-      setActiveTagNavbar(currentTag);
-    }
-
-    if (targetMailboxId !== mailboxId) {
-      void openPersistentMailbox(targetMailboxId);
-    }
-  }, [mailboxId, requestedOpenMailboxId, savedMailboxMap]);
+    setActiveTagNavbar(currentTag || 'all');
+    setPromotionMailboxId(targetMailboxId);
+    setPromotionTagDraft(currentTag);
+    setPromotionDraftOverride(requestedPromotion.registrationDraft ?? null);
+    setPromotionDraftKey(requestedPromotion.requestId);
+    setStatusText('已移至保留信箱，請確認是否套用標籤');
+    setErrorText('');
+  }, [requestedPromotion, savedMailboxMap]);
 
   const fallbackMailboxId = useMemo(() => {
     const sorted = [...savedMailboxes].sort((a, b) => new Date(b.lastUsedAt).getTime() - new Date(a.lastUsedAt).getTime());
@@ -207,14 +231,14 @@ export default function PersistentMailboxPanel({ requestedOpenMailboxId = '' }: 
   }, [savedMailboxes]);
 
   useEffect(() => {
-    if (normalizeMailboxId(requestedOpenMailboxId)) {
+    if (promotionMailboxId) {
       return;
     }
 
     if (!mailboxId && fallbackMailboxId) {
       void openPersistentMailbox(fallbackMailboxId, savedMailboxMap.get(fallbackMailboxId)?.tag ?? '');
     }
-  }, [fallbackMailboxId, mailboxId, requestedOpenMailboxId, savedMailboxMap]);
+  }, [fallbackMailboxId, mailboxId, promotionMailboxId, savedMailboxMap]);
 
   useEffect(() => {
     if (!mailboxId) {
@@ -298,6 +322,25 @@ export default function PersistentMailboxPanel({ requestedOpenMailboxId = '' }: 
     handleSaveTag(targetMailboxId);
   };
 
+  const handleConfirmPromotion = async (tagValue = promotionTagDraft) => {
+    if (!promotionMailboxId) {
+      return;
+    }
+
+    const nextTag = normalizeMailboxTag(tagValue);
+    setRequestedTag(nextTag);
+    setActiveTagNavbar(nextTag || 'all');
+    const didOpen = await openPersistentMailbox(promotionMailboxId, nextTag);
+
+    if (didOpen) {
+      setPromotionMailboxId('');
+      setPromotionTagDraft(nextTag);
+      setStatusText(nextTag ? `已移至保留信箱，標籤：${nextTag}` : '已移至保留信箱');
+    }
+  };
+
+  const registrationProfileScope = activeTagNavbar === 'all' ? 'general' : `tag:${activeTagNavbar}`;
+
   return (
     <section className="mail-card">
       <div className="mail-card__header">
@@ -328,9 +371,7 @@ export default function PersistentMailboxPanel({ requestedOpenMailboxId = '' }: 
             className={`account-tab ${activeTagNavbar === item ? 'active' : ''}`}
             onClick={() => {
               setActiveTagNavbar(item);
-              if (item !== 'all') {
-                setRequestedTag(item);
-              }
+              setRequestedTag(item === 'all' ? '' : item);
             }}
           >
             {item === 'all' ? '全部帳號' : item}
@@ -373,10 +414,12 @@ export default function PersistentMailboxPanel({ requestedOpenMailboxId = '' }: 
       </div>
 
       <RegistrationHelperPanel
-        profileScope={activeTagNavbar === 'all' ? 'general' : `tag:${activeTagNavbar}`}
+        profileScope={registrationProfileScope}
         persistDraft
         defaultCollapsed
         maskPassword
+        draftOverride={promotionDraftOverride}
+        draftOverrideKey={promotionDraftKey}
         onApplyName={(value) => {
           setRequestedMailboxId(value);
           setErrorText('');
@@ -468,6 +511,66 @@ export default function PersistentMailboxPanel({ requestedOpenMailboxId = '' }: 
           </div>
         )}
       </div>
+
+      {promotionMailboxId ? (
+        <div className="modal-backdrop" role="presentation">
+          <div className="modal-card" role="dialog" aria-modal="true" aria-labelledby="promotion-tag-title">
+            <div className="message-section__header">
+              <h3 id="promotion-tag-title">加入保留信箱前設定標籤</h3>
+              <span>{promotionMailboxId}@{MAIL_DOMAIN}</span>
+            </div>
+
+            <p className="muted modal-copy">這個信箱已經移到保留信箱。你現在可以直接沿用既有標籤、輸入新標籤，或先不加標籤。</p>
+
+            {availableTags.length > 0 ? (
+              <div className="modal-tag-list" role="list" aria-label="既有標籤">
+                {availableTags.map((tag) => (
+                  <button
+                    key={tag}
+                    type="button"
+                    className={`secondary small tag-choice ${normalizeMailboxTag(promotionTagDraft) === tag ? 'active' : ''}`}
+                    onClick={() => setPromotionTagDraft(tag)}
+                  >
+                    {tag}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+
+            <div className="input-row modal-actions-row">
+              <input
+                type="text"
+                value={promotionTagDraft}
+                placeholder="輸入新標籤，例如 nintendo / 小米 / 社群"
+                onChange={(event) => setPromotionTagDraft(normalizeMailboxTag(event.target.value))}
+              />
+            </div>
+
+            <div className="modal-actions-row">
+              <button type="button" onClick={() => void handleConfirmPromotion()} disabled={isBusy}>
+                <span className="button-content">
+                  {busyAction === 'open' && busyMailboxTarget === promotionMailboxId ? <span className="button-spinner" aria-hidden="true" /> : null}
+                  <span>{busyAction === 'open' && busyMailboxTarget === promotionMailboxId ? '套用中...' : '套用並開啟'}</span>
+                </span>
+              </button>
+              <button type="button" className="secondary" onClick={() => void handleConfirmPromotion('')} disabled={isBusy}>
+                先不加標籤
+              </button>
+              <button
+                type="button"
+                className="secondary"
+                onClick={() => {
+                  setPromotionMailboxId('');
+                  setPromotionTagDraft('');
+                }}
+                disabled={isBusy}
+              >
+                稍後再說
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {errorText ? <p className="error-text">{errorText}</p> : null}
 

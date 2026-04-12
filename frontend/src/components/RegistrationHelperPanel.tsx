@@ -1,5 +1,14 @@
 import { useEffect, useState } from 'react';
-import { generateStrongPassword, generateSuggestedMailboxName } from './mailboxUtils';
+import {
+  clearRegistrationRuntimeDraft,
+  generateStrongPassword,
+  generateSuggestedMailboxName,
+  readRegistrationDrafts,
+  readRegistrationRuntimeDraft,
+  writeRegistrationDraft,
+  writeRegistrationRuntimeDraft,
+  type RegistrationDraft,
+} from './mailboxUtils';
 
 type Props = {
   onApplyName?: (value: string) => void;
@@ -8,87 +17,9 @@ type Props = {
   persistDraft?: boolean;
   defaultCollapsed?: boolean;
   maskPassword?: boolean;
+  draftOverride?: RegistrationDraft | null;
+  draftOverrideKey?: string;
 };
-
-type RegistrationDraft = {
-  generatedName: string;
-  generatedPassword: string;
-  updatedAt: string;
-};
-
-const REGISTRATION_DRAFTS_KEY = 'mailhouse.registrationDrafts';
-const REGISTRATION_RUNTIME_DRAFT_KEY = 'mailhouse.registrationRuntimeDraft';
-
-function readDrafts() {
-  if (typeof window === 'undefined') {
-    return {} as Record<string, RegistrationDraft>;
-  }
-
-  try {
-    const raw = window.localStorage.getItem(REGISTRATION_DRAFTS_KEY);
-    const parsed = raw ? (JSON.parse(raw) as unknown) : {};
-
-    if (!parsed || typeof parsed !== 'object') {
-      return {} as Record<string, RegistrationDraft>;
-    }
-
-    return parsed as Record<string, RegistrationDraft>;
-  } catch {
-    return {} as Record<string, RegistrationDraft>;
-  }
-}
-
-function writeDraft(scope: string, draft: RegistrationDraft) {
-  if (typeof window === 'undefined') {
-    return;
-  }
-
-  const drafts = readDrafts();
-  drafts[scope] = draft;
-  window.localStorage.setItem(REGISTRATION_DRAFTS_KEY, JSON.stringify(drafts));
-}
-
-function readRuntimeDraft() {
-  if (typeof window === 'undefined') {
-    return null as RegistrationDraft | null;
-  }
-
-  try {
-    const raw = window.localStorage.getItem(REGISTRATION_RUNTIME_DRAFT_KEY);
-    if (!raw) {
-      return null;
-    }
-
-    const parsed = JSON.parse(raw) as Partial<RegistrationDraft>;
-    if (typeof parsed.generatedName !== 'string' || typeof parsed.generatedPassword !== 'string') {
-      return null;
-    }
-
-    return {
-      generatedName: parsed.generatedName,
-      generatedPassword: parsed.generatedPassword,
-      updatedAt: typeof parsed.updatedAt === 'string' ? parsed.updatedAt : new Date().toISOString(),
-    };
-  } catch {
-    return null as RegistrationDraft | null;
-  }
-}
-
-function writeRuntimeDraft(draft: RegistrationDraft) {
-  if (typeof window === 'undefined') {
-    return;
-  }
-
-  window.localStorage.setItem(REGISTRATION_RUNTIME_DRAFT_KEY, JSON.stringify(draft));
-}
-
-function clearRuntimeDraft() {
-  if (typeof window === 'undefined') {
-    return;
-  }
-
-  window.localStorage.removeItem(REGISTRATION_RUNTIME_DRAFT_KEY);
-}
 
 function scopeLabel(scope: string) {
   if (scope.startsWith('tag:')) {
@@ -133,6 +64,8 @@ export default function RegistrationHelperPanel({
   persistDraft = false,
   defaultCollapsed = true,
   maskPassword = false,
+  draftOverride = null,
+  draftOverrideKey = '',
 }: Props) {
   const [generatedPassword, setGeneratedPassword] = useState('');
   const [generatedName, setGeneratedName] = useState('');
@@ -163,7 +96,7 @@ export default function RegistrationHelperPanel({
       return;
     }
 
-    const draft = readDrafts()[profileScope];
+    const draft = readRegistrationDrafts()[profileScope];
     if (draft?.generatedName || draft?.generatedPassword) {
       setGeneratedName(draft.generatedName ?? '');
       setGeneratedPassword(draft.generatedPassword ?? '');
@@ -171,12 +104,12 @@ export default function RegistrationHelperPanel({
       return;
     }
 
-    const runtimeDraft = readRuntimeDraft();
+    const runtimeDraft = readRegistrationRuntimeDraft();
     if (runtimeDraft?.generatedName || runtimeDraft?.generatedPassword) {
       setGeneratedName(runtimeDraft.generatedName);
       setGeneratedPassword(runtimeDraft.generatedPassword);
       setLastSavedAt(runtimeDraft.updatedAt ?? '');
-      clearRuntimeDraft();
+      clearRegistrationRuntimeDraft();
       return;
     }
 
@@ -189,7 +122,7 @@ export default function RegistrationHelperPanel({
         return;
       }
 
-      writeRuntimeDraft({
+      writeRegistrationRuntimeDraft({
         generatedName,
         generatedPassword,
         updatedAt: new Date().toISOString(),
@@ -202,13 +135,27 @@ export default function RegistrationHelperPanel({
     }
 
     const updatedAt = new Date().toISOString();
-    writeDraft(profileScope, {
+    writeRegistrationDraft(profileScope, {
       generatedName,
       generatedPassword,
       updatedAt,
     });
     setLastSavedAt(updatedAt);
   }, [generatedName, generatedPassword, persistDraft, profileScope]);
+
+  useEffect(() => {
+    if (!draftOverrideKey) {
+      return;
+    }
+
+    if (!draftOverride?.generatedName && !draftOverride?.generatedPassword) {
+      return;
+    }
+
+    setGeneratedName(draftOverride.generatedName);
+    setGeneratedPassword(draftOverride.generatedPassword);
+    setLastSavedAt(draftOverride.updatedAt ?? '');
+  }, [draftOverride, draftOverrideKey]);
 
   const copyValue = async (type: 'name' | 'password', value: string) => {
     if (!value) {
