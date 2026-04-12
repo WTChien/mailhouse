@@ -48,6 +48,7 @@ export default function MailMessageTable({ messages, onMarkRead, onCleanup, clea
   const [expandedMessageId, setExpandedMessageId] = useState<string | null>(null);
   const [expandedMode, setExpandedMode] = useState<MessageViewMode>('text');
   const [isCleaningUp, setIsCleaningUp] = useState(false);
+  const [isMarkingAllRead, setIsMarkingAllRead] = useState(false);
 
   const handleCleanupClick = async () => {
     if (!onCleanup || isCleaningUp) {
@@ -59,6 +60,23 @@ export default function MailMessageTable({ messages, onMarkRead, onCleanup, clea
       await onCleanup();
     } finally {
       setIsCleaningUp(false);
+    }
+  };
+
+  const handleMarkAllReadClick = async () => {
+    if (!onMarkRead || isMarkingAllRead || pendingMessageId) {
+      return;
+    }
+
+    setIsMarkingAllRead(true);
+    try {
+      // 找出所有未讀的消息，標記為已讀
+      const unreadMessages = messages.filter((msg) => !msg.isRead);
+      for (const message of unreadMessages) {
+        await onMarkRead(message.id, true);
+      }
+    } finally {
+      setIsMarkingAllRead(false);
     }
   };
 
@@ -105,6 +123,14 @@ export default function MailMessageTable({ messages, onMarkRead, onCleanup, clea
         <h3>收到的信件</h3>
         <div className="message-section__actions">
           <span>{messages.length} 封</span>
+          {onMarkRead ? (
+            <button type="button" className="secondary small" onClick={() => void handleMarkAllReadClick()} disabled={isMarkingAllRead || isCleaningUp || pendingMessageId !== null || messages.every((msg) => msg.isRead)}>
+              <span className="button-content">
+                {isMarkingAllRead ? <span className="button-spinner" aria-hidden="true" /> : null}
+                <span>{isMarkingAllRead ? '標記中...' : '全部已讀'}</span>
+              </span>
+            </button>
+          ) : null}
           {onCleanup ? (
             <button type="button" className="secondary small" onClick={() => void handleCleanupClick()} disabled={isCleaningUp || pendingMessageId !== null}>
               <span className="button-content">

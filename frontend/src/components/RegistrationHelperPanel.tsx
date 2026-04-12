@@ -137,7 +137,6 @@ export default function RegistrationHelperPanel({
   const [nameCopied, setNameCopied] = useState(false);
   const [passwordCopied, setPasswordCopied] = useState(false);
   const [lastSavedAt, setLastSavedAt] = useState('');
-  const [isOpen, setIsOpen] = useState(!defaultCollapsed);
 
   const refreshName = () => {
     const next = generateSuggestedMailboxName();
@@ -153,9 +152,7 @@ export default function RegistrationHelperPanel({
 
   useEffect(() => {
     if (!persistDraft) {
-      refreshName();
-      refreshPassword();
-      setLastSavedAt('');
+      // 不再自动生成名称和密码，只在点击时生成
       return;
     }
 
@@ -176,9 +173,7 @@ export default function RegistrationHelperPanel({
       return;
     }
 
-    refreshName();
-    refreshPassword();
-    setLastSavedAt('');
+    // 不再初始化时生成
   }, [persistDraft, profileScope]);
 
   useEffect(() => {
@@ -251,50 +246,41 @@ export default function RegistrationHelperPanel({
     <div className="generator-panel">
       <div className="message-section__header">
         <h3>註冊小工具</h3>
-        <button type="button" className="secondary small helper-toggle" onClick={() => setIsOpen((prev) => !prev)}>
-          {isOpen ? '收合' : '展開'}
-        </button>
       </div>
 
-      {!isOpen ? (
-        <p className="muted generator-hint">目前分類：{scopeLabel(profileScope)}，點擊展開後可一鍵生成並複製。</p>
-      ) : (
-        <>
-          <p className="muted generator-hint">
-            目前分類：{scopeLabel(profileScope)}
-            {persistDraft && lastSavedAt ? `，已保存 ${new Date(lastSavedAt).toLocaleTimeString('zh-TW')}` : ''}
-          </p>
+      <p className="muted generator-hint">
+        目前分類：{scopeLabel(profileScope)}
+        {persistDraft && lastSavedAt ? `，已保存 ${new Date(lastSavedAt).toLocaleTimeString('zh-TW')}` : ''}
+      </p>
 
-          <div className="generator-grid">
-            <article className="generator-card">
-              <span className="field-label">隨機名稱</span>
-              <strong className="generator-value">{generatedName || '產生中...'}</strong>
-              <p className="muted generator-hint">可用於帳號名稱、暱稱或保留信箱名稱。</p>
-              <div className="generator-actions">
-                <button type="button" onClick={() => void handleGenerateAndCopy('name')}>
-                  {nameCopied ? '已複製' : '生成並複製'}
-                </button>
-                {onApplyName ? (
-                  <button type="button" className="secondary" onClick={handleApplyName} disabled={!generatedName}>
-                    套用到信箱欄位
-                  </button>
-                ) : null}
-              </div>
-            </article>
-
-            <article className="generator-card">
-              <span className="field-label">強密碼</span>
-              <strong className="generator-value">{generatedPassword || '產生中...'}</strong>
-              <p className="muted generator-hint">格式：前四碼英文大小寫 + 後五碼數字。</p>
-              <div className="generator-actions">
-                <button type="button" onClick={() => void handleGenerateAndCopy('password')}>
-                  {passwordCopied ? '已複製' : '生成並複製'}
-                </button>
-              </div>
-            </article>
+      <div className="generator-grid">
+        <article className="generator-card">
+          <span className="field-label">隨機名稱</span>
+          <strong className="generator-value">{generatedName || '按下生成後顯示'}</strong>
+          <p className="muted generator-hint">可用於帳號名稱、暱稱或保留信箱名稱。</p>
+          <div className="generator-actions">
+            <button type="button" onClick={() => void handleGenerateAndCopy('name')}>
+              {nameCopied ? '已複製' : '生成並複製'}
+            </button>
+            {onApplyName ? (
+              <button type="button" className="secondary" onClick={handleApplyName} disabled={!generatedName}>
+                套用到信箱欄位
+              </button>
+            ) : null}
           </div>
-        </>
-      )}
+        </article>
+
+        <article className="generator-card">
+          <span className="field-label">強密碼</span>
+          <strong className="generator-value">{generatedPassword || '按下生成後顯示'}</strong>
+          <p className="muted generator-hint">格式：前四碼英文大小寫 + 後五碼數字。</p>
+          <div className="generator-actions">
+            <button type="button" onClick={() => void handleGenerateAndCopy('password')}>
+              {passwordCopied ? '已複製' : '生成並複製'}
+            </button>
+          </div>
+        </article>
+      </div>
     </div>
   );
 }
