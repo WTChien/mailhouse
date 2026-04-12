@@ -134,7 +134,7 @@ export default {
         payload.calendar = calendarText.slice(0, MAX_CALENDAR_TEXT_LENGTH);
       }
 
-      const response = await fetch(env.API_WEBHOOK_URL, {
+          const response = await fetch(env.API_WEBHOOK_URL, {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
@@ -142,10 +142,17 @@ export default {
         },
         body: JSON.stringify(payload),
       });
+          // 新增 log webhook response 狀態與內容
+          let respText = '';
+          try {
+            respText = await response.text();
+          } catch (e) {
+            respText = '[cannot read response text]';
+          }
+          console.log('[mailhouse-worker] Webhook response:', response.status, respText);
 
       if (!response.ok) {
-        const errorBody = await response.text();
-        console.error('Failed to forward email to API:', response.status, errorBody);
+        console.error('Failed to forward email to API:', response.status, respText);
       }
     } catch (error) {
       console.error('Email Worker failed to parse or forward the message:', error);
