@@ -1,8 +1,22 @@
+export type MailAttachment = {
+  filename?: string;
+  mimeType?: string;
+  disposition?: 'attachment' | 'inline' | 'unknown';
+  contentId?: string;
+  size?: number;
+  isInline?: boolean;
+  isCalendar?: boolean;
+  method?: string;
+};
+
 export type MailMessage = {
   id: string;
   from?: string;
   subject?: string;
   text?: string;
+  html?: string;
+  calendar?: string;
+  attachments?: MailAttachment[];
   receivedAt?: string | null;
   isRead?: boolean;
 };
@@ -107,6 +121,29 @@ export function formatCountdown(seconds: number) {
 
 export function formatPreview(value = '', maxLength = 72) {
   return value.length > maxLength ? `${value.slice(0, maxLength)}...` : value || '(no content)';
+}
+
+export function htmlToPlainText(value = '') {
+  if (!value) {
+    return '';
+  }
+
+  if (typeof window !== 'undefined') {
+    const parser = new window.DOMParser();
+    const doc = parser.parseFromString(value, 'text/html');
+    return (doc.body?.textContent ?? '').replace(/\s+/g, ' ').trim();
+  }
+
+  return value.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+export function getMessageTextContent(message: MailMessage) {
+  const plainText = message.text?.trim() ?? '';
+  if (plainText) {
+    return plainText;
+  }
+
+  return htmlToPlainText(message.html ?? '');
 }
 
 export function formatReceivedAt(value?: string | null) {

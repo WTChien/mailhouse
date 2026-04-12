@@ -1,6 +1,7 @@
 import { Fragment, useState } from 'react';
+import DOMPurify from 'dompurify';
 import type { MailMessage } from './mailboxUtils';
-import { formatPreview, formatReceivedAt } from './mailboxUtils';
+import { formatPreview, formatReceivedAt, getMessageTextContent } from './mailboxUtils';
 
 type Props = {
   messages: MailMessage[];
@@ -9,10 +10,29 @@ type Props = {
   cleanupLabel?: string;
 };
 
+type MessageViewMode = 'html' | 'text';
+
+function formatBytes(value?: number) {
+  const size = Number(value ?? 0);
+  if (!Number.isFinite(size) || size <= 0) {
+    return '0 B';
+  }
+
+  if (size < 1024) {
+    return `${size} B`;
+  }
+
+  if (size < 1024 * 1024) {
+    return `${(size / 1024).toFixed(1)} KB`;
+  }
+
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 const WORKER_PLACEHOLDER_SUBJECT = '(forwarded by Cloudflare Worker)';
 
 function extractVerificationCodes(message: MailMessage) {
-  const source = `${message.subject ?? ''}\n${message.text ?? ''}`;
+  const source = `${message.subject ?? ''}\n${getMessageTextContent(message)}`;
   const matches = source.match(/\b[A-Z0-9]{4,8}\b/gi) ?? [];
 
   return Array.from(new Set(matches.map((value) => value.trim()).filter((value) => /\d/.test(value))));
@@ -26,6 +46,7 @@ function normalizeSubject(subject?: string) {
 export default function MailMessageTable({ messages, onMarkRead, onCleanup, cleanupLabel = '清理已讀郵件' }: Props) {
   const [pendingMessageId, setPendingMessageId] = useState<string | null>(null);
   const [expandedMessageId, setExpandedMessageId] = useState<string | null>(null);
+  const [expandedMode, setExpandedMode] = useState<MessageViewMode>('text');
   const [isCleaningUp, setIsCleaningUp] = useState(false);
 
   const handleCleanupClick = async () => {
@@ -54,8 +75,28 @@ export default function MailMessageTable({ messages, onMarkRead, onCleanup, clea
     }
   };
 
-  const toggleExpanded = (messageId: string) => {
-    setExpandedMessageId((current) => (current === messageId ? null : messageId));
+  const toggleExpanded = (message: MailMessage) => {
+    setExpandedMessageId((current) => {
+      if (current === message.id) {
+        return null;
+      }
+
+      setExpandedMode(message.html?.trim() ? 'html' : 'text');
+      return message.id;
+    });
+  };
+
+  const sanitizeEmailHtml = (value: string) => {
+    if (!value) {
+      return '';
+    }
+
+    return DOMPurify.sanitize(value, {
+      USE_PROFILES: { html: true },
+      FORBID_TAGS: ['script', 'iframe', 'object', 'embed'],
+      FORBID_ATTR: ['onerror', 'onload', 'onclick', 'onmouseover', 'onfocus', 'onmouseenter'],
+      ALLOW_DATA_ATTR: false,
+    });
   };
 
   return (
@@ -95,6 +136,11 @@ export default function MailMessageTable({ messages, onMarkRead, onCleanup, clea
                 const isExpanded = expandedMessageId === message.id;
                 const possibleCodes = extractVerificationCodes(message);
                 const displaySubject = normalizeSubject(message.subject);
+                const bodyText = getMessageTextContent(message);
+                const hasHtmlBody = Boolean(message.html?.trim());
+                const safeHtml = hasHtmlBody ? sanitizeEmailHtml(message.html ?? '') : '';
+                const calendarText = (message.calendar ?? '').trim();
+                const attachments = message.attachments ?? [];
 
                 return (
                   <Fragment key={message.id}>
@@ -104,8 +150,8 @@ export default function MailMessageTable({ messages, onMarkRead, onCleanup, clea
                       <td>{displaySubject || '—'}</td>
                       <td>
                         <div className="message-preview-cell">
-                          <span>{formatPreview(message.text, 96)}</span>
-                          <button type="button" className="secondary small" onClick={() => toggleExpanded(message.id)}>
+                          <span>{formatPreview(bodyText, 96)}</span>
+                          <button type="button" className="secondary small" onClick={() => toggleExpanded(message)}>
                             {isExpanded ? '收起全文' : '查看全文'}
                           </button>
                         </div>
@@ -153,7 +199,53 @@ export default function MailMessageTable({ messages, onMarkRead, onCleanup, clea
                               <span><strong>寄件人：</strong>{message.from || 'unknown'}</span>
                               {displaySubject ? <span><strong>主旨：</strong>{displaySubject}</span> : null}
                             </div>
-                            <pre className="message-detail-body">{message.text || '(目前沒有可顯示的完整內文。)'}</pre>
+                            <div className="message-detail-view-switch">
+                              {hasHtmlBody ? (
+                                <button
+                                  type="button"
+                                  className={`secondary small ${expandedMode === 'html' ? 'active-view-mode' : ''}`}
+                                  onClick={() => setExpandedMode('html')}
+                                >
+                                  HTML 檢視
+                                </button>
+                              ) : null}
+                              <button
+                                type="button"
+                                className={`secondary small ${expandedMode === 'text' ? 'active-view-mode' : ''}`}
+                                onClick={() => setExpandedMode('text')}
+                              >
+                                文字檢視
+                              </button>
+                            </div>
+                            {hasHtmlBody && expandedMode === 'html' ? (
+                              <div className="message-html-preview" dangerouslySetInnerHTML={{ __html: safeHtml }} />
+                            ) : (
+                              <pre className="message-detail-body">{bodyText || '(目前沒有可顯示的完整內文。)'}</pre>
+                            )}
+                            {calendarText ? (
+                              <div className="message-extra-block">
+                                <strong>行事曆內容 (text/calendar)</strong>
+                                <pre className="message-calendar-body">{calendarText}</pre>
+                              </div>
+                            ) : null}
+                            {attachments.length ? (
+                              <div className="message-extra-block">
+                                <strong>附件 / MIME Parts</strong>
+                                <ul className="attachment-list">
+                                  {attachments.map((item, index) => (
+                                    <li key={`${message.id}-attachment-${index}`}>
+                                      <span className="attachment-name">{item.filename || '(unnamed)'}</span>
+                                      <span>{item.mimeType || 'application/octet-stream'}</span>
+                                      <span>{item.disposition || 'unknown'}</span>
+                                      <span>{formatBytes(item.size)}</span>
+                                      {item.isInline || item.contentId ? <span>inline</span> : null}
+                                      {item.isCalendar ? <span>calendar</span> : null}
+                                      {item.method ? <span>{item.method}</span> : null}
+                                    </li>
+                                  ))}
+                                </ul>
+                              </div>
+                            ) : null}
                           </div>
                         </td>
                       </tr>

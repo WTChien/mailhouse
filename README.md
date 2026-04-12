@@ -51,6 +51,9 @@ mailboxes/{email_prefix}/messages/{message_id}
   from: string
   subject: string
   text: string
+  html: string
+  calendar: string
+  attachments: AttachmentSummary[]
   receivedAt: Timestamp
   isRead: boolean
   readAt: Timestamp | null
@@ -148,7 +151,21 @@ Example payload:
   "to": "abc12@gradaide.xyz",
   "from": "sender@example.com",
   "subject": "Hello",
-  "text": "Test message"
+  "text": "Test message",
+  "html": "<p>Test message</p>",
+  "calendar": "BEGIN:VCALENDAR...",
+  "attachments": [
+    {
+      "filename": "invite.ics",
+      "mimeType": "text/calendar",
+      "disposition": "attachment",
+      "contentId": "",
+      "size": 2048,
+      "isInline": false,
+      "isCalendar": true,
+      "method": "REQUEST"
+    }
+  ]
 }
 ```
 

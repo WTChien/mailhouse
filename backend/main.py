@@ -3,6 +3,7 @@ import os
 import re
 import secrets
 import string
+from html import unescape
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
@@ -46,6 +47,9 @@ class EmailPayload(BaseModel):
     from_: str = Field(default="", alias="from")
     subject: str = ""
     text: str = ""
+    html: str = ""
+    calendar: str = ""
+    attachments: list[dict[str, Any]] = Field(default_factory=list)
 
     model_config = ConfigDict(populate_by_name=True, extra="ignore")
 
@@ -106,6 +110,21 @@ def normalize_mailbox_id(value: str) -> Optional[str]:
     return cleaned or None
 
 
+def html_to_text(html_content: str) -> str:
+    if not html_content:
+        return ""
+
+    text = re.sub(r"(?is)<(script|style|head|title|meta)[^>]*>.*?</\1>", " ", html_content)
+    text = re.sub(r"(?i)<br\s*/?>", "\n", text)
+    text = re.sub(r"(?i)</(p|div|li|tr|h[1-6]|blockquote|section|article|table)>", "\n", text)
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = unescape(text)
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    text = re.sub(r"[ \t\f\v]+", " ", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
+
+
 def generate_mailbox_id(length: int = 5) -> str:
     return "".join(secrets.choice(RANDOM_CHARS) for _ in range(length))
 
@@ -155,6 +174,9 @@ def serialize_message(document: firestore.DocumentSnapshot) -> dict[str, Any]:
         "from": data.get("from", "unknown"),
         "subject": data.get("subject", "(no subject)"),
         "text": data.get("text", ""),
+        "html": data.get("html", ""),
+        "calendar": data.get("calendar", ""),
+        "attachments": data.get("attachments", []),
         "receivedAt": to_iso_string(data.get("receivedAt")),
         "isRead": bool(data.get("isRead", False)),
         "readAt": to_iso_string(data.get("readAt")),
@@ -462,6 +484,43 @@ async def receive_email(
     from_value = payload.from_.strip()
     subject_value = payload.subject.strip()
     text_value = payload.text.strip()
+    html_value = payload.html.strip()
+    calendar_value = payload.calendar.strip()
+    attachments_value = payload.attachments if isinstance(payload.attachments, list) else []
+
+    normalized_attachments: list[dict[str, Any]] = []
+    for attachment in attachments_value[:24]:
+        if not isinstance(attachment, dict):
+            continue
+
+        raw_size = attachment.get("size", 0)
+        try:
+            parsed_size = max(0, int(raw_size or 0))
+        except (TypeError, ValueError):
+            parsed_size = 0
+
+        mime_type = str(attachment.get("mimeType", "application/octet-stream")).strip().lower()
+        disposition = str(attachment.get("disposition", "unknown")).strip().lower()
+        normalized_attachments.append(
+            {
+                "filename": str(attachment.get("filename", "")).strip(),
+                "mimeType": mime_type,
+                "disposition": disposition if disposition in {"attachment", "inline", "unknown"} else "unknown",
+                "contentId": str(attachment.get("contentId", "")).strip(),
+                "size": parsed_size,
+                "isInline": bool(attachment.get("isInline", False)),
+                "isCalendar": bool(attachment.get("isCalendar", mime_type == "text/calendar")),
+                "method": str(attachment.get("method", "")).strip().upper(),
+            }
+        )
+
+    if not text_value and html_value:
+        text_value = html_to_text(html_value)
+
+    if not calendar_value:
+        calendar_part = next((item for item in normalized_attachments if item.get("isCalendar")), None)
+        if calendar_part:
+            calendar_value = f"CALENDAR ({calendar_part.get('method') or 'EVENT'})"
 
     prefix = get_prefix_from_recipient(to_value)
     if not prefix:
@@ -485,6 +544,9 @@ async def receive_email(
             "from": from_value or "unknown",
             "subject": subject_value or "(no subject)",
             "text": text_value or "",
+            "html": html_value or "",
+            "calendar": calendar_value or "",
+            "attachments": normalized_attachments,
             "receivedAt": firestore.SERVER_TIMESTAMP,
             "isRead": False,
             "readAt": None,

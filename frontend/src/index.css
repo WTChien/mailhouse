@@ -441,6 +441,77 @@ input:focus {
   color: #eef3ff;
 }
 
+.message-detail-view-switch {
+  display: flex;
+  gap: 0.6rem;
+  margin-bottom: 0.75rem;
+}
+
+.message-detail-view-switch .active-view-mode {
+  border-color: rgba(122, 111, 255, 0.65);
+  background: rgba(108, 99, 255, 0.2);
+  color: #f1eeff;
+}
+
+.message-html-preview {
+  border-radius: 12px;
+  border: 1px solid rgba(138, 150, 210, 0.18);
+  background: #ffffff;
+  color: #1a2238;
+  padding: 1rem;
+  overflow: auto;
+  max-height: 420px;
+}
+
+.message-html-preview img {
+  max-width: 100%;
+  height: auto;
+}
+
+.message-extra-block {
+  margin-top: 0.9rem;
+  border-top: 1px solid rgba(138, 150, 210, 0.14);
+  padding-top: 0.75rem;
+}
+
+.message-calendar-body {
+  margin: 0.45rem 0 0;
+  padding: 0.7rem;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.03);
+  color: #dce6ff;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 200px;
+  overflow: auto;
+}
+
+.attachment-list {
+  list-style: none;
+  padding: 0;
+  margin: 0.45rem 0 0;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.attachment-list li {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  align-items: center;
+  padding: 0.5rem 0.65rem;
+  border: 1px solid rgba(138, 150, 210, 0.14);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.02);
+  color: #c8d3f2;
+  font-size: 0.86rem;
+}
+
+.attachment-name {
+  font-weight: 700;
+  color: #eef3ff;
+}
+
 .table-wrapper {
   overflow-x: auto;
 }
