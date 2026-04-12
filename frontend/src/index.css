@@ -468,6 +468,17 @@ select:focus {
   word-break: break-word;
 }
 
+.generator-value-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.55rem;
+}
+
+.generator-value-row .generator-value {
+  margin-bottom: 0;
+}
+
 .generator-hint {
   margin: 0 0 0.8rem;
 }

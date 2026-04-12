@@ -376,6 +376,7 @@ export default function PersistentMailboxPanel({ requestedOpenMailboxId = '' }: 
         profileScope={activeTagNavbar === 'all' ? 'general' : `tag:${activeTagNavbar}`}
         persistDraft
         defaultCollapsed
+        maskPassword
         onApplyName={(value) => {
           setRequestedMailboxId(value);
           setErrorText('');

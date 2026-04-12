@@ -7,6 +7,7 @@ type Props = {
   onApplyTag?: (value: string) => void;
   persistDraft?: boolean;
   defaultCollapsed?: boolean;
+  maskPassword?: boolean;
 };
 
 type RegistrationDraft = {
@@ -131,12 +132,18 @@ export default function RegistrationHelperPanel({
   onApplyTag,
   persistDraft = false,
   defaultCollapsed = true,
+  maskPassword = false,
 }: Props) {
   const [generatedPassword, setGeneratedPassword] = useState('');
   const [generatedName, setGeneratedName] = useState('');
   const [nameCopied, setNameCopied] = useState(false);
   const [passwordCopied, setPasswordCopied] = useState(false);
+  const [showPassword, setShowPassword] = useState(!maskPassword);
   const [lastSavedAt, setLastSavedAt] = useState('');
+
+  useEffect(() => {
+    setShowPassword(!maskPassword);
+  }, [maskPassword]);
 
   const refreshName = () => {
     const next = generateSuggestedMailboxName();
@@ -242,6 +249,30 @@ export default function RegistrationHelperPanel({
     }
   };
 
+  const handleGenerateOnly = (type: 'name' | 'password') => {
+    if (type === 'name') {
+      refreshName();
+      return;
+    }
+
+    refreshPassword();
+  };
+
+  const handleCopyCurrent = async (type: 'name' | 'password') => {
+    try {
+      const value = type === 'name' ? generatedName : generatedPassword;
+      await copyValue(type, value);
+    } catch (error) {
+      console.error(error);
+    }
+  };
+
+  const displayPassword = generatedPassword
+    ? showPassword
+      ? generatedPassword
+      : '•'.repeat(generatedPassword.length)
+    : '按下生成後顯示';
+
   return (
     <div className="generator-panel">
       <div className="message-section__header">
@@ -259,12 +290,35 @@ export default function RegistrationHelperPanel({
           <strong className="generator-value">{generatedName || '按下生成後顯示'}</strong>
           <p className="muted generator-hint">可用於帳號名稱、暱稱或保留信箱名稱。</p>
           <div className="generator-actions">
-            <button type="button" onClick={() => void handleGenerateAndCopy('name')}>
-              {nameCopied ? '已複製' : '生成並複製'}
-            </button>
+            {generatedName ? (
+              <>
+                <button type="button" onClick={() => handleGenerateOnly('name')}>
+                  <span className="button-content">
+                    <span aria-hidden="true">🔁</span>
+                    <span>重新生成</span>
+                  </span>
+                </button>
+                <button type="button" className="secondary" onClick={() => void handleCopyCurrent('name')}>
+                  <span className="button-content">
+                    <span aria-hidden="true">📋</span>
+                    <span>{nameCopied ? '已複製' : '複製名稱'}</span>
+                  </span>
+                </button>
+              </>
+            ) : (
+              <button type="button" onClick={() => void handleGenerateAndCopy('name')}>
+                <span className="button-content">
+                  <span aria-hidden="true">✨</span>
+                  <span>{nameCopied ? '已複製' : '生成並複製'}</span>
+                </span>
+              </button>
+            )}
             {onApplyName ? (
               <button type="button" className="secondary" onClick={handleApplyName} disabled={!generatedName}>
-                套用到信箱欄位
+                <span className="button-content">
+                  <span aria-hidden="true">🧩</span>
+                  <span>套用到信箱欄位</span>
+                </span>
               </button>
             ) : null}
           </div>
@@ -272,12 +326,48 @@ export default function RegistrationHelperPanel({
 
         <article className="generator-card">
           <span className="field-label">強密碼</span>
-          <strong className="generator-value">{generatedPassword || '按下生成後顯示'}</strong>
+          <div className="generator-value-row">
+            <strong className="generator-value">{displayPassword}</strong>
+            {generatedPassword && maskPassword ? (
+              <button
+                type="button"
+                className="secondary small"
+                onClick={() => setShowPassword((prev) => !prev)}
+                aria-label={showPassword ? '隱藏密碼' : '顯示密碼'}
+                title={showPassword ? '隱藏密碼' : '顯示密碼'}
+              >
+                <span className="button-content">
+                  <span aria-hidden="true">{showPassword ? '🙈' : '👁️'}</span>
+                  <span>{showPassword ? '隱藏' : '顯示'}</span>
+                </span>
+              </button>
+            ) : null}
+          </div>
           <p className="muted generator-hint">格式：前四碼英文大小寫 + 後五碼數字。</p>
           <div className="generator-actions">
-            <button type="button" onClick={() => void handleGenerateAndCopy('password')}>
-              {passwordCopied ? '已複製' : '生成並複製'}
-            </button>
+            {generatedPassword ? (
+              <>
+                <button type="button" onClick={() => handleGenerateOnly('password')}>
+                  <span className="button-content">
+                    <span aria-hidden="true">🔁</span>
+                    <span>重新生成</span>
+                  </span>
+                </button>
+                <button type="button" className="secondary" onClick={() => void handleCopyCurrent('password')}>
+                  <span className="button-content">
+                    <span aria-hidden="true">📋</span>
+                    <span>{passwordCopied ? '已複製' : '複製密碼'}</span>
+                  </span>
+                </button>
+              </>
+            ) : (
+              <button type="button" onClick={() => void handleGenerateAndCopy('password')}>
+                <span className="button-content">
+                  <span aria-hidden="true">✨</span>
+                  <span>{passwordCopied ? '已複製' : '生成並複製'}</span>
+                </span>
+              </button>
+            )}
           </div>
         </article>
       </div>
