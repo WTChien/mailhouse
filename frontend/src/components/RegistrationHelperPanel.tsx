@@ -125,36 +125,43 @@ export default function RegistrationHelperPanel({
         return;
       }
 
-      writeRegistrationRuntimeDraft({
-        generatedName,
-        generatedPassword,
-        updatedAt: new Date().toISOString(),
-      });
+      const timerId = window.setTimeout(() => {
+        writeRegistrationRuntimeDraft({
+          generatedName,
+          generatedPassword,
+          updatedAt: new Date().toISOString(),
+        });
 
-      const runtimeDraft = readRegistrationRuntimeDraft();
-      void updateClientSyncState({ registrationRuntimeDraft: runtimeDraft }).catch((error) => {
-        console.error(error);
-      });
-      return;
+        const runtimeDraft = readRegistrationRuntimeDraft();
+        void updateClientSyncState({ registrationRuntimeDraft: runtimeDraft }).catch((error) => {
+          console.error('Failed to sync runtime draft:', error);
+        });
+      }, 1000);
+
+      return () => window.clearTimeout(timerId);
     }
 
     if (!generatedName && !generatedPassword) {
       return;
     }
 
-    const updatedAt = new Date().toISOString();
-    setLastSavedAt(updatedAt);
+    const timerId = window.setTimeout(() => {
+      const updatedAt = new Date().toISOString();
+      setLastSavedAt(updatedAt);
 
-    const drafts = readRegistrationDrafts();
-    drafts[profileScope] = {
-      generatedName,
-      generatedPassword,
-      updatedAt,
-    };
+      const drafts = readRegistrationDrafts();
+      drafts[profileScope] = {
+        generatedName,
+        generatedPassword,
+        updatedAt,
+      };
 
-    void updateClientSyncState({ registrationDrafts: drafts }).catch((error) => {
-      console.error(error);
-    });
+      void updateClientSyncState({ registrationDrafts: drafts }).catch((error) => {
+        console.error('Failed to sync registration drafts:', error);
+      });
+    }, 1500);
+
+    return () => window.clearTimeout(timerId);
   }, [generatedName, generatedPassword, persistDraft, profileScope]);
 
   useEffect(() => {

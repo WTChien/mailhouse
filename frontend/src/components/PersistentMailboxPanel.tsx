@@ -50,6 +50,7 @@ export default function PersistentMailboxPanel({ requestedPromotion = null }: Pe
   const [promotionTagDraft, setPromotionTagDraft] = useState('');
   const [promotionDraftOverride, setPromotionDraftOverride] = useState<RegistrationDraft | null>(null);
   const [promotionDraftKey, setPromotionDraftKey] = useState('');
+  const [lastSyncedMailboxes, setLastSyncedMailboxes] = useState<string>('');
   const handledPromotionRequestIdRef = useRef('');
 
   const emailAddress = useMemo(() => (mailboxId ? `${mailboxId}@${MAIL_DOMAIN}` : ''), [mailboxId]);
@@ -63,6 +64,7 @@ export default function PersistentMailboxPanel({ requestedPromotion = null }: Pe
         const cloudData = await getClientSyncState();
         if (!disposed) {
           setSavedMailboxes(cloudData.savedMailboxes ?? []);
+          setLastSyncedMailboxes(JSON.stringify(cloudData.savedMailboxes ?? []));
         }
       } catch (error) {
         console.error('Failed to load saved mailboxes from cloud:', error);
@@ -71,8 +73,16 @@ export default function PersistentMailboxPanel({ requestedPromotion = null }: Pe
 
     void loadCloudSavedMailboxes();
 
+    const handleOnline = () => {
+      console.log('Network restored, retrying sync...');
+      void loadCloudSavedMailboxes();
+    };
+
+    window.addEventListener('online', handleOnline);
+
     return () => {
       disposed = true;
+      window.removeEventListener('online', handleOnline);
     };
   }, []);
 
@@ -181,10 +191,22 @@ export default function PersistentMailboxPanel({ requestedPromotion = null }: Pe
   };
 
   useEffect(() => {
-    void updateClientSyncState({ savedMailboxes }).catch((error) => {
-      console.error(error);
-    });
-  }, [savedMailboxes]);
+    const currentState = JSON.stringify(savedMailboxes);
+    if (currentState === lastSyncedMailboxes) {
+      return;
+    }
+
+    const timerId = window.setTimeout(() => {
+      void updateClientSyncState({ savedMailboxes }).then(() => {
+        setLastSyncedMailboxes(JSON.stringify(savedMailboxes));
+        console.log('Saved mailboxes synced to cloud');
+      }).catch((error) => {
+        console.error('Failed to sync saved mailboxes:', error);
+      });
+    }, 1500);
+
+    return () => window.clearTimeout(timerId);
+  }, [savedMailboxes, lastSyncedMailboxes]);
 
   useEffect(() => {
     setTagDraftByMailbox((prev) => {

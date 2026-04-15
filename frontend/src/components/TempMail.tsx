@@ -42,16 +42,15 @@ export default function TempMail() {
               registrationDrafts: localRegistrationDrafts,
               registrationRuntimeDraft: localRuntimeDraft,
             });
+            if (!disposed) {
+              writeSavedMailboxes([]);
+              writeRegistrationDrafts({});
+              if (!localRuntimeDraft?.generatedName && !localRuntimeDraft?.generatedPassword) {
+                clearRegistrationRuntimeDraft();
+              }
+            }
           } catch (uploadError) {
-            console.error('Failed to upload local data to cloud:', uploadError);
-          }
-        }
-
-        if (!disposed) {
-          writeSavedMailboxes([]);
-          writeRegistrationDrafts({});
-          if (!localRuntimeDraft?.generatedName && !localRuntimeDraft?.generatedPassword) {
-            clearRegistrationRuntimeDraft();
+            console.error('Failed to upload local data to cloud. Keeping local data for retry:', uploadError);
           }
         }
       } catch (error) {
