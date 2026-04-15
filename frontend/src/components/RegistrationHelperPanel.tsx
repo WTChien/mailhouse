@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react';
+import { updateClientSyncState } from '../lib/api';
 import {
   clearRegistrationRuntimeDraft,
   generateStrongPassword,
   generateSuggestedMailboxName,
   readRegistrationDrafts,
   readRegistrationRuntimeDraft,
-  writeRegistrationDraft,
   writeRegistrationRuntimeDraft,
   type RegistrationDraft,
 } from './mailboxUtils';
@@ -110,6 +110,9 @@ export default function RegistrationHelperPanel({
       setGeneratedPassword(runtimeDraft.generatedPassword);
       setLastSavedAt(runtimeDraft.updatedAt ?? '');
       clearRegistrationRuntimeDraft();
+      void updateClientSyncState({ registrationRuntimeDraft: null }).catch((error) => {
+        console.error(error);
+      });
       return;
     }
 
@@ -127,6 +130,11 @@ export default function RegistrationHelperPanel({
         generatedPassword,
         updatedAt: new Date().toISOString(),
       });
+
+      const runtimeDraft = readRegistrationRuntimeDraft();
+      void updateClientSyncState({ registrationRuntimeDraft: runtimeDraft }).catch((error) => {
+        console.error(error);
+      });
       return;
     }
 
@@ -135,12 +143,18 @@ export default function RegistrationHelperPanel({
     }
 
     const updatedAt = new Date().toISOString();
-    writeRegistrationDraft(profileScope, {
+    setLastSavedAt(updatedAt);
+
+    const drafts = readRegistrationDrafts();
+    drafts[profileScope] = {
       generatedName,
       generatedPassword,
       updatedAt,
+    };
+
+    void updateClientSyncState({ registrationDrafts: drafts }).catch((error) => {
+      console.error(error);
     });
-    setLastSavedAt(updatedAt);
   }, [generatedName, generatedPassword, persistDraft, profileScope]);
 
   useEffect(() => {

@@ -62,6 +62,25 @@ class ReadStatePayload(BaseModel):
     isRead: bool = True
 
 
+class SavedMailboxItemPayload(BaseModel):
+    mailboxId: str = ""
+    tag: str = ""
+    createdAt: str = ""
+    lastUsedAt: str = ""
+
+
+class RegistrationDraftPayload(BaseModel):
+    generatedName: str = ""
+    generatedPassword: str = ""
+    updatedAt: str = ""
+
+
+class ClientSyncStateUpdatePayload(BaseModel):
+    savedMailboxes: Optional[list[SavedMailboxItemPayload]] = None
+    registrationDrafts: Optional[dict[str, RegistrationDraftPayload]] = None
+    registrationRuntimeDraft: Optional[RegistrationDraftPayload] = None
+
+
 def load_firebase_credential() -> Optional[credentials.Base]:
     """Load Firebase credentials from env JSON or a local service account file."""
     service_account_json = os.getenv("FIREBASE_SERVICE_ACCOUNT_JSON", "").strip()
@@ -108,6 +127,127 @@ def extract_email(raw_value: str) -> Optional[str]:
 def normalize_mailbox_id(value: str) -> Optional[str]:
     cleaned = re.sub(r"[^a-z0-9]", "", value.lower())[:24]
     return cleaned or None
+
+
+def normalize_mailbox_tag(value: str) -> str:
+    return re.sub(r"\s+", " ", str(value or "").strip())[:28]
+
+
+def parse_iso_datetime(value: Any) -> Optional[datetime]:
+    if not isinstance(value, str) or not value.strip():
+        return None
+
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def normalize_registration_draft(value: Any) -> Optional[dict[str, str]]:
+    if not isinstance(value, dict):
+        return None
+
+    generated_name = str(value.get("generatedName", "")).strip()
+    generated_password = str(value.get("generatedPassword", "")).strip()
+
+    if not generated_name and not generated_password:
+        return None
+
+    updated_at_raw = value.get("updatedAt")
+    updated_at = parse_iso_datetime(updated_at_raw)
+    if updated_at is None:
+        updated_at = datetime.now(timezone.utc)
+
+    return {
+        "generatedName": generated_name,
+        "generatedPassword": generated_password,
+        "updatedAt": updated_at.astimezone(timezone.utc).isoformat(),
+    }
+
+
+def normalize_saved_mailboxes(value: Any) -> list[dict[str, str]]:
+    if not isinstance(value, list):
+        return []
+
+    normalized_items: list[dict[str, str]] = []
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    for raw_item in value:
+        if not isinstance(raw_item, dict):
+            continue
+
+        mailbox_id = normalize_mailbox_id(str(raw_item.get("mailboxId", "")))
+        if not mailbox_id:
+            continue
+
+        created_at = parse_iso_datetime(raw_item.get("createdAt"))
+        last_used_at = parse_iso_datetime(raw_item.get("lastUsedAt"))
+
+        created_at_iso = (created_at or datetime.now(timezone.utc)).astimezone(timezone.utc).isoformat()
+        last_used_at_iso = (last_used_at or created_at or datetime.now(timezone.utc)).astimezone(timezone.utc).isoformat()
+
+        normalized_items.append(
+            {
+                "mailboxId": mailbox_id,
+                "tag": normalize_mailbox_tag(raw_item.get("tag", "")),
+                "createdAt": created_at_iso or now_iso,
+                "lastUsedAt": last_used_at_iso,
+            }
+        )
+
+    deduped: dict[str, dict[str, str]] = {}
+    for item in normalized_items:
+        existing = deduped.get(item["mailboxId"])
+        if existing is None:
+            deduped[item["mailboxId"]] = item
+            continue
+
+        existing_created = parse_iso_datetime(existing.get("createdAt")) or datetime.now(timezone.utc)
+        existing_last_used = parse_iso_datetime(existing.get("lastUsedAt")) or datetime.now(timezone.utc)
+        current_created = parse_iso_datetime(item.get("createdAt")) or datetime.now(timezone.utc)
+        current_last_used = parse_iso_datetime(item.get("lastUsedAt")) or datetime.now(timezone.utc)
+
+        deduped[item["mailboxId"]] = {
+            "mailboxId": item["mailboxId"],
+            "tag": item.get("tag") or existing.get("tag", ""),
+            "createdAt": min(existing_created, current_created).astimezone(timezone.utc).isoformat(),
+            "lastUsedAt": max(existing_last_used, current_last_used).astimezone(timezone.utc).isoformat(),
+        }
+
+    return list(deduped.values())
+
+
+def normalize_registration_drafts(value: Any) -> dict[str, dict[str, str]]:
+    if not isinstance(value, dict):
+        return {}
+
+    result: dict[str, dict[str, str]] = {}
+    for raw_scope, raw_draft in value.items():
+        scope = str(raw_scope or "").strip()[:64]
+        if not scope:
+            continue
+
+        draft = normalize_registration_draft(raw_draft)
+        if draft is None:
+            continue
+
+        result[scope] = draft
+
+    return result
+
+
+def normalize_client_sync_state(value: Any) -> dict[str, Any]:
+    raw = value if isinstance(value, dict) else {}
+    runtime_draft = normalize_registration_draft(raw.get("registrationRuntimeDraft"))
+
+    return {
+        "savedMailboxes": normalize_saved_mailboxes(raw.get("savedMailboxes")),
+        "registrationDrafts": normalize_registration_drafts(raw.get("registrationDrafts")),
+        "registrationRuntimeDraft": runtime_draft,
+        "updatedAt": firestore.SERVER_TIMESTAMP,
+    }
 
 
 def html_to_text(html_content: str) -> str:
@@ -251,6 +391,61 @@ def cleanup_mailboxes_and_messages(read_retention_hours: int = 0) -> dict[str, i
 @app.get("/health")
 async def health_check() -> dict:
     return {"status": "ok"}
+
+
+@app.get("/api/client-sync")
+async def get_client_sync_state() -> dict[str, Any]:
+    sync_ref = db.collection("client_sync").document("default")
+    snapshot = sync_ref.get()
+    if not snapshot.exists:
+        return {
+            "status": "ok",
+            "savedMailboxes": [],
+            "registrationDrafts": {},
+            "registrationRuntimeDraft": None,
+            "updatedAt": None,
+        }
+
+    data = snapshot.to_dict() or {}
+    normalized = normalize_client_sync_state(data)
+    return {
+        "status": "ok",
+        "savedMailboxes": normalized.get("savedMailboxes", []),
+        "registrationDrafts": normalized.get("registrationDrafts", {}),
+        "registrationRuntimeDraft": normalized.get("registrationRuntimeDraft"),
+        "updatedAt": to_iso_string(data.get("updatedAt")),
+    }
+
+
+@app.patch("/api/client-sync")
+async def update_client_sync_state(payload: ClientSyncStateUpdatePayload) -> dict[str, Any]:
+    sync_ref = db.collection("client_sync").document("default")
+    current_data = sync_ref.get().to_dict() or {}
+    merged_state = {
+        "savedMailboxes": current_data.get("savedMailboxes", []),
+        "registrationDrafts": current_data.get("registrationDrafts", {}),
+        "registrationRuntimeDraft": current_data.get("registrationRuntimeDraft"),
+    }
+
+    payload_data = payload.model_dump(exclude_unset=True)
+    if "savedMailboxes" in payload_data:
+        merged_state["savedMailboxes"] = payload_data.get("savedMailboxes")
+
+    if "registrationDrafts" in payload_data:
+        merged_state["registrationDrafts"] = payload_data.get("registrationDrafts")
+
+    if "registrationRuntimeDraft" in payload_data:
+        merged_state["registrationRuntimeDraft"] = payload_data.get("registrationRuntimeDraft")
+
+    normalized = normalize_client_sync_state(merged_state)
+    sync_ref.set(normalized, merge=True)
+
+    return {
+        "status": "ok",
+        "savedMailboxes": normalized.get("savedMailboxes", []),
+        "registrationDrafts": normalized.get("registrationDrafts", {}),
+        "registrationRuntimeDraft": normalized.get("registrationRuntimeDraft"),
+    }
 
 
 @app.post("/api/mailboxes/temp")

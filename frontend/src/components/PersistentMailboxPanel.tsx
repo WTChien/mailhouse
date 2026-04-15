@@ -3,17 +3,17 @@ import {
   cleanupReadMessages,
   createOrLoadPersistentMailbox,
   deleteMailbox,
+  getClientSyncState,
   getMailboxMessages,
   MAIL_DOMAIN,
   markMessageRead,
+  updateClientSyncState,
 } from '../lib/api';
 import MailMessageTable from './MailMessageTable';
 import RegistrationHelperPanel from './RegistrationHelperPanel';
 import {
   normalizeMailboxId,
   normalizeMailboxTag,
-  readSavedMailboxes,
-  writeSavedMailboxes,
   type MailMessage,
   type RegistrationDraft,
   type SavedMailboxItem,
@@ -42,7 +42,7 @@ export default function PersistentMailboxPanel({ requestedPromotion = null }: Pe
   const [copied, setCopied] = useState(false);
   const [busyAction, setBusyAction] = useState<BusyAction>(null);
   const [busyMailboxTarget, setBusyMailboxTarget] = useState('');
-  const [savedMailboxes, setSavedMailboxes] = useState<SavedMailboxItem[]>(() => readSavedMailboxes());
+  const [savedMailboxes, setSavedMailboxes] = useState<SavedMailboxItem[]>([]);
   const [activeTagNavbar, setActiveTagNavbar] = useState('all');
   const [savedListSort, setSavedListSort] = useState<SavedListSort>('recent');
   const [tagDraftByMailbox, setTagDraftByMailbox] = useState<Record<string, string>>({});
@@ -54,6 +54,27 @@ export default function PersistentMailboxPanel({ requestedPromotion = null }: Pe
 
   const emailAddress = useMemo(() => (mailboxId ? `${mailboxId}@${MAIL_DOMAIN}` : ''), [mailboxId]);
   const isBusy = busyAction !== null;
+
+  useEffect(() => {
+    let disposed = false;
+
+    const loadCloudSavedMailboxes = async () => {
+      try {
+        const cloudData = await getClientSyncState();
+        if (!disposed) {
+          setSavedMailboxes(cloudData.savedMailboxes ?? []);
+        }
+      } catch (error) {
+        console.error('Failed to load saved mailboxes from cloud:', error);
+      }
+    };
+
+    void loadCloudSavedMailboxes();
+
+    return () => {
+      disposed = true;
+    };
+  }, []);
 
   const syncMessages = async (targetMailboxId: string) => {
     try {
@@ -160,11 +181,9 @@ export default function PersistentMailboxPanel({ requestedPromotion = null }: Pe
   };
 
   useEffect(() => {
-    if (typeof window === 'undefined') {
-      return;
-    }
-
-    writeSavedMailboxes(savedMailboxes);
+    void updateClientSyncState({ savedMailboxes }).catch((error) => {
+      console.error(error);
+    });
   }, [savedMailboxes]);
 
   useEffect(() => {

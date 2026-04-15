@@ -1,4 +1,5 @@
 import type { MailMessage } from '../components/mailboxUtils';
+import type { RegistrationDraft, SavedMailboxItem } from '../components/mailboxUtils';
 
 export type MailboxMode = 'temporary' | 'persistent';
 
@@ -11,6 +12,14 @@ export type MailboxResponse = {
   createdAt?: string | null;
   updatedAt?: string | null;
   messages?: MailMessage[];
+};
+
+export type ClientSyncState = {
+  status: string;
+  savedMailboxes: SavedMailboxItem[];
+  registrationDrafts: Record<string, RegistrationDraft>;
+  registrationRuntimeDraft: RegistrationDraft | null;
+  updatedAt?: string | null;
 };
 
 export const MAIL_DOMAIN = import.meta.env.VITE_MAIL_DOMAIN ?? 'gradaide.xyz';
@@ -92,4 +101,15 @@ export async function cleanupReadMessages(readRetentionHours = 0) {
       method: 'POST',
     },
   );
+}
+
+export async function getClientSyncState() {
+  return apiRequest<ClientSyncState>('/api/client-sync');
+}
+
+export async function updateClientSyncState(payload: Partial<Pick<ClientSyncState, 'savedMailboxes' | 'registrationDrafts' | 'registrationRuntimeDraft'>>) {
+  return apiRequest<ClientSyncState>('/api/client-sync', {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
 }

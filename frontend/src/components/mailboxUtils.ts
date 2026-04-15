@@ -55,7 +55,7 @@ function pickRandomChars(source: string, length: number) {
   return Array.from({ length }, () => source[Math.floor(Math.random() * source.length)]).join('');
 }
 
-function normalizeRegistrationDraft(value?: Partial<RegistrationDraft> | null) {
+export function normalizeRegistrationDraft(value?: Partial<RegistrationDraft> | null) {
   if (!value) {
     return null as RegistrationDraft | null;
   }
@@ -251,6 +251,14 @@ export function writeRegistrationDraft(scope: string, draft: RegistrationDraft) 
 
   const drafts = readRegistrationDrafts();
   drafts[scope] = draft;
+  window.localStorage.setItem(REGISTRATION_DRAFTS_KEY, JSON.stringify(drafts));
+}
+
+export function writeRegistrationDrafts(drafts: Record<string, RegistrationDraft>) {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
   window.localStorage.setItem(REGISTRATION_DRAFTS_KEY, JSON.stringify(drafts));
 }
 

@@ -21,7 +21,7 @@ Incoming email
   - 只有在 **30 分鐘到期** 或你手動按下 **產生新信箱** 時才會重設
 - **保留信箱**
   - 可指定並保存自己想用的名稱
-  - 重新整理後仍會保留已保存的清單
+  - 已保存清單、分類標籤、註冊小工具草稿會同步到 Firestore（跨裝置可用）
   - 可手動載入、複製與刪除
 - **共用郵件檢視**
   - `30 分鐘信箱` 與 `保留信箱` 共用同一套 `收到的郵件` 介面
@@ -142,6 +142,8 @@ Main endpoints:
 - `PATCH /api/mailboxes/{mailbox_id}/messages/{message_id}/read` — mark a message as read/unread
 - `POST /api/cleanup?read_retention_hours=24` — remove old read mail and expired temporary mailboxes
 - `DELETE /api/mailboxes/{mailbox_id}` — delete a mailbox
+- `GET /api/client-sync` — load cross-device client sync state
+- `PATCH /api/client-sync` — update cross-device client sync state
 
 The Email Worker posts JSON to:
 
@@ -178,6 +180,7 @@ Example payload:
 
 - The frontend now talks **only to FastAPI**; it does not access Firestore directly.
 - Temporary mailbox state is saved in browser `localStorage`, so a page refresh will keep the current mailbox until expiry.
+- Saved mailbox list, tag categories, and registration helper drafts are synced via `client_sync/default` in Firestore for cross-device continuity.
 - `30 分鐘信箱` 與 `保留信箱` 的 `收到的郵件` 區塊使用同一個共享元件，因此顯示樣式會一致。
 - If you use the **Cloudflare dashboard quick-edit Worker** fallback script, the stored subject/body may be simplified placeholders. For the original subject and full parsed text, deploy the `worker/` project version with `postal-mime` via Wrangler.
 - A starter rule set is included in `firestore.rules`; tighten it further before production use.
