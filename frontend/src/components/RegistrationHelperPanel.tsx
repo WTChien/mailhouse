@@ -260,13 +260,13 @@ export default function RegistrationHelperPanel({
           <div className="generator-actions">
             {generatedName ? (
               <>
-                <button type="button" onClick={() => handleGenerateOnly('name')}>
+                <button type="button" className="secondary" onClick={() => handleGenerateOnly('name')}>
                   <span className="button-content">
                     <span aria-hidden="true">🔁</span>
                     <span>重新生成</span>
                   </span>
                 </button>
-                <button type="button" className="secondary" onClick={() => void handleCopyCurrent('name')}>
+                <button type="button" onClick={() => void handleCopyCurrent('name')}>
                   <span className="button-content">
                     <span aria-hidden="true">📋</span>
                     <span>{nameCopied ? '已複製' : '複製名稱'}</span>
@@ -315,13 +315,13 @@ export default function RegistrationHelperPanel({
           <div className="generator-actions">
             {generatedPassword ? (
               <>
-                <button type="button" onClick={() => handleGenerateOnly('password')}>
+                <button type="button" className="secondary" onClick={() => handleGenerateOnly('password')}>
                   <span className="button-content">
                     <span aria-hidden="true">🔁</span>
                     <span>重新生成</span>
                   </span>
                 </button>
-                <button type="button" className="secondary" onClick={() => void handleCopyCurrent('password')}>
+                <button type="button" onClick={() => void handleCopyCurrent('password')}>
                   <span className="button-content">
                     <span aria-hidden="true">📋</span>
                     <span>{passwordCopied ? '已複製' : '複製密碼'}</span>
