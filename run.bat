@@ -20,16 +20,19 @@ if not exist "%CD%\frontend\node_modules" (
 set "PYTHON_EXE=%CD%\backend\.venv\Scripts\python.exe"
 if not exist "%PYTHON_EXE%" set "PYTHON_EXE=python"
 
-echo [mailhouse] Clearing any stale backend on port 8000...
-powershell -NoProfile -Command "$connections = Get-NetTCPConnection -LocalPort 8000 -State Listen -ErrorAction SilentlyContinue; foreach ($conn in $connections) { Stop-Process -Id $conn.OwningProcess -Force -ErrorAction SilentlyContinue }"
+echo [mailhouse] Killing any existing uvicorn and vite processes...
+powershell -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { ($_.Name -match 'python') -and ($_.CommandLine -match 'uvicorn') } | ForEach-Object { cmd /c ('taskkill /PID ' + $_.ProcessId + ' /T /F') }"
+powershell -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { ($_.Name -match 'node') -and ($_.CommandLine -match 'vite') } | ForEach-Object { cmd /c ('taskkill /PID ' + $_.ProcessId + ' /T /F') }"
 
-echo [mailhouse] Starting backend on http://127.0.0.1:8000
+echo [mailhouse] Starting backend on http://127.0.0.1:5556
 pushd "%CD%\backend"
-start "mailhouse-backend" /B "%PYTHON_EXE%" -m uvicorn main:app --app-dir "%CD%\backend" --reload --port 8000 --env-file .env
-for /f %%i in ('powershell -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*main:app*--app-dir*mailhouse\\backend*--reload*--port*8000*' } | Select-Object -First 1 -ExpandProperty ProcessId"') do set "BACKEND_PID=%%i"
+start /B "" "%PYTHON_EXE%" -m uvicorn main:app --app-dir "%CD%\backend" --host 127.0.0.1 --port 5556 --env-file .env
 popd
 
-echo [mailhouse] Starting frontend on http://127.0.0.1:5173
+echo [mailhouse] Waiting for backend to be ready...
+powershell -NoProfile -Command "$ok=$false; for($i=0;$i -lt 20;$i++){ try{ $r=Invoke-WebRequest -Uri 'http://127.0.0.1:5556/api/health' -Method Get -UseBasicParsing -ErrorAction Stop; $ok=$true; break } catch { Start-Sleep -Milliseconds 500 } }; if(-not $ok){ Write-Error 'Backend did not start in time' }"
+
+echo [mailhouse] Starting frontend on http://127.0.0.1:5555
 echo [mailhouse] Press Ctrl+C to stop both services.
 
 pushd "%CD%\frontend"
@@ -37,9 +40,8 @@ call npm run dev
 set "FRONTEND_EXIT=%ERRORLEVEL%"
 popd
 
-echo [mailhouse] Stopping backend...
-if defined BACKEND_PID (
-  powershell -NoProfile -Command "if (Get-Process -Id %BACKEND_PID% -ErrorAction SilentlyContinue) { Stop-Process -Id %BACKEND_PID% -Force }"
-)
+echo [mailhouse] Stopping local services...
+call "%CD%\stop.bat"
 
 exit /b %FRONTEND_EXIT%
+

@@ -29,10 +29,11 @@ export type PersistentPromotionRequest = {
 };
 
 type PersistentMailboxPanelProps = {
+  isActive?: boolean;
   requestedPromotion?: PersistentPromotionRequest | null;
 };
 
-export default function PersistentMailboxPanel({ requestedPromotion = null }: PersistentMailboxPanelProps) {
+export default function PersistentMailboxPanel({ isActive = true, requestedPromotion = null }: PersistentMailboxPanelProps) {
   const [mailboxId, setMailboxId] = useState('');
   const [requestedMailboxId, setRequestedMailboxId] = useState('');
   const [requestedTag, setRequestedTag] = useState('');
@@ -51,7 +52,10 @@ export default function PersistentMailboxPanel({ requestedPromotion = null }: Pe
   const [promotionDraftOverride, setPromotionDraftOverride] = useState<RegistrationDraft | null>(null);
   const [promotionDraftKey, setPromotionDraftKey] = useState('');
   const [lastSyncedMailboxes, setLastSyncedMailboxes] = useState<string>('');
+  const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const handledPromotionRequestIdRef = useRef('');
+  const cloudLoadedRef = useRef(false);
 
   const emailAddress = useMemo(() => (mailboxId ? `${mailboxId}@${MAIL_DOMAIN}` : ''), [mailboxId]);
   const isBusy = busyAction !== null;
@@ -63,6 +67,7 @@ export default function PersistentMailboxPanel({ requestedPromotion = null }: Pe
       try {
         const cloudData = await getClientSyncState();
         if (!disposed) {
+          cloudLoadedRef.current = true;
           setSavedMailboxes(cloudData.savedMailboxes ?? []);
           setLastSyncedMailboxes(JSON.stringify(cloudData.savedMailboxes ?? []));
         }
@@ -191,6 +196,9 @@ export default function PersistentMailboxPanel({ requestedPromotion = null }: Pe
   };
 
   useEffect(() => {
+    if (!cloudLoadedRef.current) {
+      return;
+    }
     const currentState = JSON.stringify(savedMailboxes);
     if (currentState === lastSyncedMailboxes) {
       return;
@@ -282,7 +290,7 @@ export default function PersistentMailboxPanel({ requestedPromotion = null }: Pe
   }, [fallbackMailboxId, mailboxId, promotionMailboxId, savedMailboxMap]);
 
   useEffect(() => {
-    if (!mailboxId) {
+    if (!isActive || !mailboxId || !autoRefreshEnabled) {
       return;
     }
 
@@ -292,7 +300,17 @@ export default function PersistentMailboxPanel({ requestedPromotion = null }: Pe
     }, 4000);
 
     return () => window.clearInterval(timer);
-  }, [mailboxId]);
+  }, [autoRefreshEnabled, isActive, mailboxId]);
+
+  const handleRefreshNow = async () => {
+    if (!mailboxId || isRefreshing) {
+      return;
+    }
+
+    setIsRefreshing(true);
+    await syncMessages(mailboxId);
+    setIsRefreshing(false);
+  };
 
   const handleMarkRead = async (messageId: string, isRead: boolean) => {
     if (!mailboxId) {
@@ -420,54 +438,6 @@ export default function PersistentMailboxPanel({ requestedPromotion = null }: Pe
         ))}
       </div>
 
-      <div className="mode-panel">
-        <p className="field-label">建立 / 載入保留信箱（目前分類：{activeTagNavbar === 'all' ? '全部帳號' : activeTagNavbar}）</p>
-        <div className="input-row">
-          <input
-            type="text"
-            value={requestedMailboxId}
-            placeholder="輸入想保留的名稱，例如 grada01"
-            onChange={(event) => setRequestedMailboxId(normalizeMailboxId(event.target.value))}
-          />
-          <input
-            type="text"
-            className="tag-input"
-            value={requestedTag}
-            placeholder="標籤用途，例如 nintendo / 小米 / 社群"
-            onChange={(event) => setRequestedTag(normalizeMailboxTag(event.target.value))}
-          />
-          <button type="button" onClick={() => void openPersistentMailbox()} disabled={isBusy}>
-            <span className="button-content">
-              {isOpeningRequested ? <span className="button-spinner" aria-hidden="true" /> : null}
-              <span>{isOpeningRequested ? '載入中...' : '建立 / 載入'}</span>
-            </span>
-          </button>
-          <button type="button" className="secondary" onClick={handleCopy} disabled={!emailAddress}>
-            {copied ? '已複製' : '複製目前信箱'}
-          </button>
-          <button type="button" className="danger" onClick={() => void handleDeleteMailbox()} disabled={!mailboxId || isBusy}>
-            <span className="button-content">
-              {isDeletingCurrent ? <span className="button-spinner" aria-hidden="true" /> : null}
-              <span>{isDeletingCurrent ? '刪除中...' : '刪除此信箱'}</span>
-            </span>
-          </button>
-        </div>
-      </div>
-
-      <RegistrationHelperPanel
-        profileScope={registrationProfileScope}
-        persistDraft
-        defaultCollapsed
-        maskPassword
-        draftOverride={promotionDraftOverride}
-        draftOverrideKey={promotionDraftKey}
-        onApplyName={(value) => {
-          setRequestedMailboxId(value);
-          setErrorText('');
-        }}
-        onApplyTag={(value) => setRequestedTag(normalizeMailboxTag(value))}
-      />
-
       <div className="saved-mailboxes">
         <div className="message-section__header">
           <h3>{activeTagNavbar === 'all' ? '保留電子郵件清單' : `${activeTagNavbar} 清單`}</h3>
@@ -552,6 +522,68 @@ export default function PersistentMailboxPanel({ requestedPromotion = null }: Pe
           </div>
         )}
       </div>
+
+      <div className="mode-panel">
+        <p className="field-label">建立 / 載入保留信箱（目前分類：{activeTagNavbar === 'all' ? '全部帳號' : activeTagNavbar}）</p>
+        <div className="input-row">
+          <input
+            type="text"
+            value={requestedMailboxId}
+            placeholder="輸入想保留的名稱，例如 grada01"
+            onChange={(event) => setRequestedMailboxId(normalizeMailboxId(event.target.value))}
+          />
+          <input
+            type="text"
+            className="tag-input"
+            value={requestedTag}
+            placeholder="標籤用途，例如 nintendo / 小米 / 社群"
+            onChange={(event) => setRequestedTag(normalizeMailboxTag(event.target.value))}
+          />
+          <button type="button" onClick={() => void openPersistentMailbox()} disabled={isBusy}>
+            <span className="button-content">
+              {isOpeningRequested ? <span className="button-spinner" aria-hidden="true" /> : null}
+              <span>{isOpeningRequested ? '載入中...' : '建立 / 載入'}</span>
+            </span>
+          </button>
+          <button type="button" className="secondary" onClick={handleCopy} disabled={!emailAddress}>
+            {copied ? '已複製' : '複製目前信箱'}
+          </button>
+          <button
+            type="button"
+            className="secondary"
+            onClick={() => setAutoRefreshEnabled((prev) => !prev)}
+            disabled={!mailboxId}
+          >
+            {autoRefreshEnabled ? '關閉自動刷新' : '開啟自動刷新'}
+          </button>
+          <button type="button" className="secondary" onClick={() => void handleRefreshNow()} disabled={!mailboxId || isRefreshing}>
+            <span className="button-content">
+              {isRefreshing ? <span className="button-spinner" aria-hidden="true" /> : null}
+              <span>{isRefreshing ? '刷新中...' : '立即刷新'}</span>
+            </span>
+          </button>
+          <button type="button" className="danger" onClick={() => void handleDeleteMailbox()} disabled={!mailboxId || isBusy}>
+            <span className="button-content">
+              {isDeletingCurrent ? <span className="button-spinner" aria-hidden="true" /> : null}
+              <span>{isDeletingCurrent ? '刪除中...' : '刪除此信箱'}</span>
+            </span>
+          </button>
+        </div>
+      </div>
+
+      <RegistrationHelperPanel
+        profileScope={registrationProfileScope}
+        persistDraft
+        defaultCollapsed
+        maskPassword
+        draftOverride={promotionDraftOverride}
+        draftOverrideKey={promotionDraftKey}
+        onApplyName={(value) => {
+          setRequestedMailboxId(value);
+          setErrorText('');
+        }}
+        onApplyTag={(value) => setRequestedTag(normalizeMailboxTag(value))}
+      />
 
       {promotionMailboxId ? (
         <div className="modal-backdrop" role="presentation">

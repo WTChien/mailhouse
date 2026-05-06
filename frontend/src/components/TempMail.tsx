@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import PersistentMailboxPanel, { type PersistentPromotionRequest } from './PersistentMailboxPanel';
 import TemporaryMailboxPanel from './TemporaryMailboxPanel';
+import GitHubAccountPanel from './GitHubAccountPanel';
 import {
   clearRegistrationRuntimeDraft,
   readRegistrationDrafts,
@@ -15,6 +16,7 @@ import { getClientSyncState, updateClientSyncState } from '../lib/api';
 const tabs = [
   { id: 'temporary', label: '30 分鐘信箱', hint: '短時驗證收信' },
   { id: 'persistent', label: '保留信箱', hint: '長期分類管理' },
+  { id: 'github', label: 'GitHub 帳號管理', hint: 'GitHub 帳號追蹤' },
 ] as const;
 
 type TabId = (typeof tabs)[number]['id'];
@@ -91,6 +93,7 @@ export default function TempMail() {
 
       <div hidden={activeTab !== 'temporary'} aria-hidden={activeTab !== 'temporary'}>
         <TemporaryMailboxPanel
+          isActive={activeTab === 'temporary'}
           onMoveToPersistent={(mailboxId) => {
             setRequestedPromotion({
               mailboxId,
@@ -102,7 +105,10 @@ export default function TempMail() {
         />
       </div>
       <div hidden={activeTab !== 'persistent'} aria-hidden={activeTab !== 'persistent'}>
-        <PersistentMailboxPanel requestedPromotion={requestedPromotion} />
+        <PersistentMailboxPanel isActive={activeTab === 'persistent'} requestedPromotion={requestedPromotion} />
+      </div>
+      <div hidden={activeTab !== 'github'} aria-hidden={activeTab !== 'github'}>
+        <GitHubAccountPanel onViewMailbox={() => setActiveTab('persistent')} />
       </div>
     </section>
   );

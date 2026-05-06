@@ -23,10 +23,11 @@ import {
 type BusyAction = 'create' | 'extend' | 'move' | null;
 
 type TemporaryMailboxPanelProps = {
+  isActive?: boolean;
   onMoveToPersistent?: (mailboxId: string) => void;
 };
 
-export default function TemporaryMailboxPanel({ onMoveToPersistent }: TemporaryMailboxPanelProps) {
+export default function TemporaryMailboxPanel({ isActive = true, onMoveToPersistent }: TemporaryMailboxPanelProps) {
   const initialTemporaryMailbox = readTemporaryMailboxState();
   const [mailboxId, setMailboxId] = useState(initialTemporaryMailbox?.mailboxId ?? '');
   const [expireAt, setExpireAt] = useState<Date | null>(() =>
@@ -49,6 +50,8 @@ export default function TemporaryMailboxPanel({ onMoveToPersistent }: TemporaryM
   const [copied, setCopied] = useState(false);
   const [busyAction, setBusyAction] = useState<BusyAction>(null);
   const [didAutoReset, setDidAutoReset] = useState(false);
+  const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   const emailAddress = useMemo(() => (mailboxId ? `${mailboxId}@${MAIL_DOMAIN}` : ''), [mailboxId]);
   const isBusy = busyAction !== null;
@@ -112,7 +115,7 @@ export default function TemporaryMailboxPanel({ onMoveToPersistent }: TemporaryM
   }, [expireAt, mailboxId]);
 
   useEffect(() => {
-    if (!mailboxId) {
+    if (!isActive || !mailboxId || !autoRefreshEnabled) {
       return;
     }
 
@@ -122,7 +125,17 @@ export default function TemporaryMailboxPanel({ onMoveToPersistent }: TemporaryM
     }, 4000);
 
     return () => window.clearInterval(timer);
-  }, [mailboxId]);
+  }, [autoRefreshEnabled, isActive, mailboxId]);
+
+  const handleRefreshNow = async () => {
+    if (!mailboxId || isRefreshing) {
+      return;
+    }
+
+    setIsRefreshing(true);
+    await syncMessages(mailboxId);
+    setIsRefreshing(false);
+  };
 
   useEffect(() => {
     if (!expireAt) {
@@ -269,6 +282,20 @@ export default function TemporaryMailboxPanel({ onMoveToPersistent }: TemporaryM
         <div className="mailbox-actions">
           <button type="button" onClick={handleCopy} disabled={!emailAddress}>
             {copied ? '已複製' : '複製信箱'}
+          </button>
+          <button
+            type="button"
+            className="secondary"
+            onClick={() => setAutoRefreshEnabled((prev) => !prev)}
+            disabled={!mailboxId}
+          >
+            {autoRefreshEnabled ? '關閉自動刷新' : '開啟自動刷新'}
+          </button>
+          <button type="button" className="secondary" onClick={() => void handleRefreshNow()} disabled={!mailboxId || isRefreshing}>
+            <span className="button-content">
+              {isRefreshing ? <span className="button-spinner" aria-hidden="true" /> : null}
+              <span>{isRefreshing ? '刷新中...' : '立即刷新'}</span>
+            </span>
           </button>
           <button type="button" className="secondary" onClick={() => void handleCreateMailbox()} disabled={isBusy}>
             <span className="button-content">

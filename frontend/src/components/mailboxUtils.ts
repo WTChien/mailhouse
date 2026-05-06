@@ -72,7 +72,7 @@ export function normalizeRegistrationDraft(value?: Partial<RegistrationDraft> | 
 }
 
 export function generateStrongPassword() {
-  return `${pickRandomChars(UPPER_LOWER_CHARS, 4)}${pickRandomChars(DIGIT_CHARS, 5)}`;
+  return `${pickRandomChars(UPPER_LOWER_CHARS, 7)}${pickRandomChars(DIGIT_CHARS, 5)}`;
 }
 
 export function generateSuggestedMailboxName() {

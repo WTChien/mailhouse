@@ -2,6 +2,8 @@
 
 Disposable email system built with **React (TSX)**, **FastAPI**, **Firebase Firestore**, and **Cloudflare Email Workers** for the `gradaide.xyz` domain.
 
+> **帳號資訊**：Firebase / Firestore 專案使用 Google 帳號 `tim40a1`。
+
 ## Architecture
 
 ```text

@@ -23,9 +23,14 @@ MAIL_DOMAIN = os.getenv("MAIL_DOMAIN", "gradaide.xyz").lower()
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "")
 CORS_ORIGINS = [
     origin.strip()
-    for origin in os.getenv("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(",")
+    for origin in os.getenv(
+        "CORS_ORIGINS",
+        "http://localhost:5173,http://127.0.0.1:5173,http://localhost:4012,http://127.0.0.1:4012",
+    ).split(",")
     if origin.strip()
 ]
+LOCAL_CORS_REGEX = r"https?://(localhost|127\\.0\\.0\\.1)(:\\d+)?$"
+print(f"[mailhouse] Effective CORS_ORIGINS: {CORS_ORIGINS}")
 RANDOM_CHARS = string.ascii_lowercase + string.digits
 
 try:
@@ -35,7 +40,7 @@ except ValueError:
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=CORS_ORIGINS or ["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -446,6 +451,11 @@ async def update_client_sync_state(payload: ClientSyncStateUpdatePayload) -> dic
         "registrationDrafts": normalized.get("registrationDrafts", {}),
         "registrationRuntimeDraft": normalized.get("registrationRuntimeDraft"),
     }
+
+
+@app.get("/api/health")
+async def health_check() -> dict[str, str]:
+    return {"status": "ok"}
 
 
 @app.post("/api/mailboxes/temp")
