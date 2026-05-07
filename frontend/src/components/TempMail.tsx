@@ -31,6 +31,7 @@ export default function TempMail() {
   const [requestedPromotion, setRequestedPromotion] = useState<PersistentPromotionRequest | null>(null);
   const [githubFocusRequest, setGitHubFocusRequest] = useState<GitHubFocusRequest | null>(null);
   const [syncReady, setSyncReady] = useState(false);
+  const [savedMailboxes, setSavedMailboxes] = useState<any[]>([]);
 
 
   useEffect(() => {
@@ -101,6 +102,7 @@ export default function TempMail() {
       <div hidden={activeTab !== 'temporary'} aria-hidden={activeTab !== 'temporary'}>
         <TemporaryMailboxPanel
           isActive={activeTab === 'temporary'}
+          savedMailboxes={savedMailboxes}
           onMoveToPersistent={(mailboxId) => {
             setRequestedPromotion({
               mailboxId,
@@ -121,6 +123,7 @@ export default function TempMail() {
             setGitHubFocusRequest({ mailboxId, requestId: `${mailboxId}-${Date.now()}` });
             setActiveTab('github');
           }}
+          onSavedMailboxesChange={setSavedMailboxes}
         />
       </div>
       <div hidden={activeTab !== 'github'} aria-hidden={activeTab !== 'github'}>

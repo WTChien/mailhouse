@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { getClientSyncState, updateClientSyncState } from '../lib/api';
+import { getClientSyncState, updateClientSyncState, deleteMailbox, MAIL_DOMAIN } from '../lib/api';
 import { SavedMailboxItem, readRegistrationDrafts } from './mailboxUtils';
 
 type GitHubAccountStatus = 'unused' | 'active' | 'half' | 'exhausted';
@@ -219,6 +219,7 @@ export default function GitHubAccountPanel({
   const [focusOnlyMailboxId, setFocusOnlyMailboxId] = useState<string | null>(null);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [deletingMailboxId, setDeletingMailboxId] = useState<string | null>(null);
   const syncTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const handledFocusRequestIdRef = useRef('');
 
@@ -467,6 +468,28 @@ export default function GitHubAccountPanel({
     }
   };
 
+  const handleDeleteMailbox = async (mailboxId: string) => {
+    if (typeof window !== 'undefined' && !window.confirm(`確定刪除信箱 ${mailboxId}@${MAIL_DOMAIN}？`)) {
+      return;
+    }
+
+    setDeletingMailboxId(mailboxId);
+    try {
+      await deleteMailbox(mailboxId);
+      setAccounts((prev) => prev.filter((account) => account.mailboxId !== mailboxId));
+      
+      // Update cloud sync state
+      const cloudData = await getClientSyncState();
+      const updatedMailboxes = cloudData.savedMailboxes.filter((item) => item.mailboxId !== mailboxId);
+      await updateClientSyncState({ savedMailboxes: updatedMailboxes });
+    } catch (error) {
+      console.error('Failed to delete mailbox:', error);
+      alert(error instanceof Error ? error.message : '刪除信箱失敗，請稍後再試。');
+    } finally {
+      setDeletingMailboxId(null);
+    }
+  };
+
   const toggleExpanded = (mailboxId: string) => {
     setExpandedIds((prev) => {
       const next = new Set(prev);
@@ -681,6 +704,14 @@ export default function GitHubAccountPanel({
                     <div className="account-actions">
                       <button type="button" onClick={() => handleViewMailbox(account.mailboxId)}>
                         查看信箱
+                      </button>
+                      <button 
+                        type="button" 
+                        className="danger"
+                        onClick={() => void handleDeleteMailbox(account.mailboxId)}
+                        disabled={deletingMailboxId === account.mailboxId}
+                      >
+                        {deletingMailboxId === account.mailboxId ? '刪除中...' : '刪除信箱'}
                       </button>
                     </div>
                   </>

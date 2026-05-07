@@ -34,6 +34,7 @@ type PersistentMailboxPanelProps = {
   onJumpToGitHubAccount?: (mailboxId: string) => void;
   focusMailboxId?: string | null;
   focusRequestId?: string;
+  onSavedMailboxesChange?: (mailboxes: SavedMailboxItem[]) => void;
 };
 
 export default function PersistentMailboxPanel({
@@ -42,6 +43,7 @@ export default function PersistentMailboxPanel({
   onJumpToGitHubAccount,
   focusMailboxId = null,
   focusRequestId = '',
+  onSavedMailboxesChange,
 }: PersistentMailboxPanelProps) {
   const [mailboxId, setMailboxId] = useState('');
   const [requestedMailboxId, setRequestedMailboxId] = useState('');
@@ -109,6 +111,10 @@ export default function PersistentMailboxPanel({
       window.removeEventListener('online', handleOnline);
     };
   }, []);
+
+  useEffect(() => {
+    onSavedMailboxesChange?.(savedMailboxes);
+  }, [savedMailboxes, onSavedMailboxesChange]);
 
   const syncMessages = async (targetMailboxId: string) => {
     try {
@@ -624,50 +630,7 @@ export default function PersistentMailboxPanel({
         )}
       </div>
 
-      <div className="mode-panel">
-        <p className="field-label">建立 / 載入保留信箱（目前分類：{activeTagNavbar === 'all' ? '全部帳號' : activeTagNavbar}）</p>
-        <div className="input-row">
-          <input
-            type="text"
-            value={requestedMailboxId}
-            placeholder="輸入想保留的名稱，例如 grada01"
-            onChange={(event) => setRequestedMailboxId(normalizeMailboxId(event.target.value))}
-          />
-          <input
-            type="text"
-            className="tag-input"
-            value={requestedTag}
-            placeholder="標籤用途，例如 nintendo / 小米 / 社群"
-            onChange={(event) => setRequestedTag(normalizeMailboxTag(event.target.value))}
-          />
-          <button type="button" onClick={() => void openPersistentMailbox()} disabled={isBusy}>
-            <span className="button-content">
-              {isOpeningRequested ? <span className="button-spinner" aria-hidden="true" /> : null}
-              <span>{isOpeningRequested ? '載入中...' : '建立 / 載入'}</span>
-            </span>
-          </button>
-          <button
-            type="button"
-            className="secondary"
-            onClick={() => setAutoRefreshEnabled((prev) => !prev)}
-            disabled={!mailboxId}
-          >
-            {autoRefreshEnabled ? '關閉自動刷新' : '開啟自動刷新'}
-          </button>
-          <button type="button" className="secondary" onClick={() => void handleRefreshNow()} disabled={!mailboxId || isRefreshing}>
-            <span className="button-content">
-              {isRefreshing ? <span className="button-spinner" aria-hidden="true" /> : null}
-              <span>{isRefreshing ? '刷新中...' : '立即刷新'}</span>
-            </span>
-          </button>
-          <button type="button" className="danger" onClick={() => void handleDeleteMailbox()} disabled={!mailboxId || isBusy}>
-            <span className="button-content">
-              {isDeletingCurrent ? <span className="button-spinner" aria-hidden="true" /> : null}
-              <span>{isDeletingCurrent ? '刪除中...' : '刪除此信箱'}</span>
-            </span>
-          </button>
-        </div>
-      </div>
+
 
       {promotionMailboxId ? (
         <div className="modal-backdrop" role="presentation">

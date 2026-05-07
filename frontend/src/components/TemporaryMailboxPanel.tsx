@@ -23,9 +23,10 @@ type BusyAction = 'create' | 'move' | null;
 type TemporaryMailboxPanelProps = {
   isActive?: boolean;
   onMoveToPersistent?: (mailboxId: string) => void;
+  savedMailboxes?: Array<{ mailboxId: string; tag?: string }>;
 };
 
-export default function TemporaryMailboxPanel({ isActive = true, onMoveToPersistent }: TemporaryMailboxPanelProps) {
+export default function TemporaryMailboxPanel({ isActive = true, onMoveToPersistent, savedMailboxes = [] }: TemporaryMailboxPanelProps) {
   const initialTemporaryMailbox = readTemporaryMailboxState();
   const [mailboxId, setMailboxId] = useState(initialTemporaryMailbox?.mailboxId ?? '');
   const [messages, setMessages] = useState<MailMessage[]>([]);
@@ -44,6 +45,10 @@ export default function TemporaryMailboxPanel({ isActive = true, onMoveToPersist
   const isBusy = busyAction !== null;
   const isCreating = busyAction === 'create';
   const isMoving = busyAction === 'move';
+  const isMailboxReserved = useMemo(() => {
+    if (!mailboxId) return false;
+    return savedMailboxes.some(item => item.mailboxId === mailboxId);
+  }, [mailboxId, savedMailboxes]);
 
   const syncMessages = async (targetMailboxId: string) => {
     try {
@@ -243,12 +248,14 @@ export default function TemporaryMailboxPanel({ isActive = true, onMoveToPersist
               <span>{isCreating ? '產生中...' : '產生新信箱'}</span>
             </span>
           </button>
-          <button type="button" className="secondary tiny" onClick={handleMoveToPersistent} disabled={!mailboxId || isBusy}>
-            <span className="button-content">
-              {isMoving ? <span className="button-spinner" aria-hidden="true" /> : null}
-              <span>{isMoving ? '移動中...' : '移至保留信箱'}</span>
-            </span>
-          </button>
+          {!isMailboxReserved && (
+            <button type="button" className="secondary tiny" onClick={handleMoveToPersistent} disabled={!mailboxId || isBusy}>
+              <span className="button-content">
+                {isMoving ? <span className="button-spinner" aria-hidden="true" /> : null}
+                <span>{isMoving ? '移動中...' : '移至保留信箱'}</span>
+              </span>
+            </button>
+          )}
           <button 
             type="button" 
             className="secondary tiny refresh-arrow" 
