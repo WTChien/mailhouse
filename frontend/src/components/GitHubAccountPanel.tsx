@@ -357,7 +357,7 @@ export default function GitHubAccountPanel({
     handledFocusRequestIdRef.current = focusRequestId;
     setActiveManagementTag(target?.tag ?? 'github');
     setStatusFilter('all');
-    setSortOrder('name');
+    setSortOrder('status');
     setFocusOnlyMailboxId(focusMailboxId);
     setExpandedIds(new Set([focusMailboxId]));
   }, [focusMailboxId, focusRequestId, loading, accounts]);
@@ -403,8 +403,23 @@ export default function GitHubAccountPanel({
         }
 
         if (sortOrder === 'status') {
-          const diff = STATUS_ORDER[a.status] - STATUS_ORDER[b.status];
-          return diff !== 0 ? diff : a.mailboxId.localeCompare(b.mailboxId, 'en');
+          // 首先按状态排序
+          const statusDiff = STATUS_ORDER[a.status] - STATUS_ORDER[b.status];
+          if (statusDiff !== 0) {
+            return statusDiff;
+          }
+
+          // 对于 half 和 exhausted 状态，按重置时间排序（时间短到长）
+          if ((a.status === 'half' || a.status === 'exhausted') && a.resetTime.trim() !== '') {
+            const aTime = new Date(a.resetTime).getTime();
+            const bTime = new Date(b.resetTime).getTime();
+            if (aTime !== bTime) {
+              return aTime - bTime;
+            }
+          }
+
+          // 默认按邮箱ID排序
+          return a.mailboxId.localeCompare(b.mailboxId, 'en');
         }
 
         const aHasReset = a.resetTime.trim() !== '';
@@ -540,6 +555,7 @@ export default function GitHubAccountPanel({
             onClick={() => {
               setFocusOnlyMailboxId(null);
               setExpandedIds(new Set());
+              setSortOrder('status');
             }}
           >
             顯示全部帳號

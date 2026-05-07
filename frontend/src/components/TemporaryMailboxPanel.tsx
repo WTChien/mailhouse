@@ -111,11 +111,17 @@ export default function TemporaryMailboxPanel({ isActive = true, onMoveToPersist
   }, [mailboxId]);
 
   useEffect(() => {
-    if (!isActive || !mailboxId || !autoRefreshEnabled) {
+    if (!isActive || !mailboxId) {
       return;
     }
 
+    // Sync messages immediately when tab becomes active
     void syncMessages(mailboxId);
+
+    if (!autoRefreshEnabled) {
+      return;
+    }
+
     const timer = window.setInterval(() => {
       void syncMessages(mailboxId);
     }, 4000);

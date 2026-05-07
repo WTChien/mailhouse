@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import PersistentMailboxPanel, { type PersistentPromotionRequest } from './PersistentMailboxPanel';
 import TemporaryMailboxPanel from './TemporaryMailboxPanel';
 import GitHubAccountPanel from './GitHubAccountPanel';
@@ -32,6 +32,7 @@ export default function TempMail() {
   const [githubFocusRequest, setGitHubFocusRequest] = useState<GitHubFocusRequest | null>(null);
   const [syncReady, setSyncReady] = useState(false);
   const [savedMailboxes, setSavedMailboxes] = useState<any[]>([]);
+  const prevActiveTabRef = useRef<TabId>('persistent');
 
 
   useEffect(() => {
@@ -78,6 +79,14 @@ export default function TempMail() {
       disposed = true;
     };
   }, []);
+
+  useEffect(() => {
+    // Clear promotion state when leaving persistent tab to avoid stale state
+    if (prevActiveTabRef.current === 'persistent' && activeTab !== 'persistent') {
+      setRequestedPromotion(null);
+    }
+    prevActiveTabRef.current = activeTab;
+  }, [activeTab]);
 
   if (!syncReady) {
     return <section className="tabs-shell">同步資料載入中...</section>;

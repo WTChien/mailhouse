@@ -338,11 +338,17 @@ export default function PersistentMailboxPanel({
   }, [fallbackMailboxId, mailboxId, promotionMailboxId, savedMailboxMap]);
 
   useEffect(() => {
-    if (!isActive || !mailboxId || !autoRefreshEnabled) {
+    if (!isActive || !mailboxId) {
       return;
     }
 
+    // Sync messages immediately when tab becomes active (solves issue where new emails don't appear)
     void syncMessages(mailboxId);
+
+    if (!autoRefreshEnabled) {
+      return;
+    }
+
     const timer = window.setInterval(() => {
       void syncMessages(mailboxId);
     }, 4000);

@@ -319,7 +319,7 @@ export default function RegistrationHelperPanel({
               </button>
             ) : null}
           </div>
-          <p className="muted generator-hint">格式：前四碼英文大小寫 + 後五碼數字。</p>
+          <p className="muted generator-hint">格式：5個大寫字母 + 5個小寫字母 + 5個數字（共15碼）。需包含數字和小寫字母。</p>
           <div className="generator-actions">
             {generatedPassword ? (
               <>

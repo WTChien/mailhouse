@@ -74,7 +74,9 @@ export function normalizeRegistrationDraft(value?: Partial<RegistrationDraft> | 
 }
 
 export function generateStrongPassword() {
-  return `${pickRandomChars(UPPER_LOWER_CHARS, 7)}${pickRandomChars(DIGIT_CHARS, 5)}`;
+  // 根据密码规则生成：至少15个字符，包含至少1个数字和1个小写字母
+  // 组成：5个大写字母 + 5个小写字母 + 5个数字 = 15个字符
+  return `${pickRandomChars('ABCDEFGHIJKLMNOPQRSTUVWXYZ', 5)}${pickRandomChars('abcdefghijklmnopqrstuvwxyz', 5)}${pickRandomChars(DIGIT_CHARS, 5)}`;
 }
 
 export function generateSuggestedMailboxName() {
