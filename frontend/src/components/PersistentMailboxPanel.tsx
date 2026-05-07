@@ -31,9 +31,14 @@ export type PersistentPromotionRequest = {
 type PersistentMailboxPanelProps = {
   isActive?: boolean;
   requestedPromotion?: PersistentPromotionRequest | null;
+  onJumpToGitHubAccount?: (mailboxId: string) => void;
 };
 
-export default function PersistentMailboxPanel({ isActive = true, requestedPromotion = null }: PersistentMailboxPanelProps) {
+export default function PersistentMailboxPanel({
+  isActive = true,
+  requestedPromotion = null,
+  onJumpToGitHubAccount,
+}: PersistentMailboxPanelProps) {
   const [mailboxId, setMailboxId] = useState('');
   const [requestedMailboxId, setRequestedMailboxId] = useState('');
   const [requestedTag, setRequestedTag] = useState('');
@@ -467,6 +472,8 @@ export default function PersistentMailboxPanel({ isActive = true, requestedPromo
             {visibleSavedMailboxes.map((savedMailbox) => {
               const isLoadingSaved = busyAction === 'open' && busyMailboxTarget === savedMailbox.mailboxId;
               const isDeletingSaved = busyAction === 'delete' && busyMailboxTarget === savedMailbox.mailboxId;
+              const normalizedSavedTag = normalizeMailboxTag(savedMailbox.tag);
+              const canJumpToGitHub = normalizedSavedTag === 'github';
 
               return (
                 <div className="saved-chip" key={savedMailbox.mailboxId}>
@@ -493,6 +500,15 @@ export default function PersistentMailboxPanel({ isActive = true, requestedPromo
                     />
                   </div>
                   <div className="saved-chip__actions">
+                    {canJumpToGitHub ? (
+                      <button
+                        type="button"
+                        className="secondary small"
+                        onClick={() => onJumpToGitHubAccount?.(savedMailbox.mailboxId)}
+                      >
+                        GitHub管理
+                      </button>
+                    ) : null}
                     <button
                       type="button"
                       className="secondary small"

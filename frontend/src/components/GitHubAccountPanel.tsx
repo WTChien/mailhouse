@@ -14,6 +14,8 @@ type GitHubAccount = {
 
 type GitHubAccountPanelProps = {
   onViewMailbox: () => void;
+  focusMailboxId?: string | null;
+  focusRequestId?: string;
 };
 
 const GITHUB_ACCOUNT_SETTINGS_KEY = 'mailhouse.githubAccountSettings';
@@ -33,32 +35,21 @@ const STATUS_ORDER: Record<GitHubAccountStatus, number> = {
   exhausted: 3,
 };
 
-const RESET_WINDOW_MS = 24 * 60 * 60 * 1000;
-
-function getNextResetIso(fromTimestamp = Date.now()) {
-  return new Date(fromTimestamp + RESET_WINDOW_MS).toISOString();
-}
-
 function applyResetWhenDue(account: GitHubAccount, nowTimestamp = Date.now()) {
   const resetTimestamp = new Date(account.resetTime).getTime();
-  const hasValidResetTime = !Number.isNaN(resetTimestamp);
-  const isDue = !hasValidResetTime || resetTimestamp <= nowTimestamp;
+  const hasValidResetTime = !Number.isNaN(resetTimestamp) && account.resetTime.trim() !== '';
+  const isDue = hasValidResetTime && resetTimestamp <= nowTimestamp;
 
   if (!isDue) {
     return account;
   }
 
   const shouldResetStatus = account.status === 'half' || account.status === 'exhausted';
-  const nextResetTime = getNextResetIso(nowTimestamp);
-
-  if (!shouldResetStatus && account.resetTime === nextResetTime) {
-    return account;
-  }
 
   return {
     ...account,
     status: shouldResetStatus ? 'unused' : account.status,
-    resetTime: nextResetTime,
+    resetTime: '',
   };
 }
 
@@ -84,7 +75,7 @@ function loadStoredAccountSettings() {
         : 'unused';
       const resetTime = typeof value.resetTime === 'string' && !Number.isNaN(new Date(value.resetTime).getTime())
         ? value.resetTime
-        : getNextResetIso();
+        : '';
 
       acc[mailboxId] = { status, resetTime };
       return acc;
@@ -121,7 +112,7 @@ async function syncAccountSettingsToFirestore(accounts: GitHubAccount[]) {
     // Note: This stores the settings in registrationDrafts temporarily until a dedicated API is created
     await updateClientSyncState({
       registrationDrafts: {
-        __github_accounts_meta__: {
+        _github_accounts_meta: {
           generatedName: JSON.stringify(payload),
           generatedPassword: 'meta',
           updatedAt: new Date().toISOString(),
@@ -133,7 +124,11 @@ async function syncAccountSettingsToFirestore(accounts: GitHubAccount[]) {
   }
 }
 
-export default function GitHubAccountPanel({ onViewMailbox }: GitHubAccountPanelProps) {
+export default function GitHubAccountPanel({
+  onViewMailbox,
+  focusMailboxId = null,
+  focusRequestId = '',
+}: GitHubAccountPanelProps) {
   const [accounts, setAccounts] = useState<GitHubAccount[]>([]);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState<GitHubAccountStatus | 'all'>('all');
@@ -154,7 +149,7 @@ export default function GitHubAccountPanel({ onViewMailbox }: GitHubAccountPanel
           mailboxId: item.mailboxId,
           username: `user_${item.mailboxId}`,
           password: `pass_${item.mailboxId}`,
-          resetTime: persistedSettings[item.mailboxId]?.resetTime ?? getNextResetIso(),
+          resetTime: persistedSettings[item.mailboxId]?.resetTime ?? '',
           status: persistedSettings[item.mailboxId]?.status ?? 'unused',
         })).map((account) => applyResetWhenDue(account));
 
@@ -230,6 +225,21 @@ export default function GitHubAccountPanel({ onViewMailbox }: GitHubAccountPanel
     };
   }, [accounts, loading]);
 
+  useEffect(() => {
+    if (loading || !focusMailboxId) {
+      return;
+    }
+
+    const hasTarget = accounts.some((account) => account.mailboxId === focusMailboxId);
+    if (!hasTarget) {
+      return;
+    }
+
+    setStatusFilter('all');
+    setSortOrder('name');
+    setExpandedIds(new Set([focusMailboxId]));
+  }, [accounts, focusMailboxId, focusRequestId, loading]);
+
   const visibleAccounts = useMemo(() => {
     return [...accounts]
       .filter((account) => statusFilter === 'all' || account.status === statusFilter)
@@ -241,6 +251,17 @@ export default function GitHubAccountPanel({ onViewMailbox }: GitHubAccountPanel
         if (sortOrder === 'status') {
           const diff = STATUS_ORDER[a.status] - STATUS_ORDER[b.status];
           return diff !== 0 ? diff : a.mailboxId.localeCompare(b.mailboxId, 'en');
+        }
+
+        const aHasReset = a.resetTime.trim() !== '';
+        const bHasReset = b.resetTime.trim() !== '';
+
+        if (aHasReset !== bHasReset) {
+          return aHasReset ? -1 : 1;
+        }
+
+        if (!aHasReset && !bHasReset) {
+          return a.mailboxId.localeCompare(b.mailboxId, 'en');
         }
 
         return new Date(a.resetTime).getTime() - new Date(b.resetTime).getTime();
@@ -325,6 +346,13 @@ export default function GitHubAccountPanel({ onViewMailbox }: GitHubAccountPanel
                 <option value="reset">重置時間</option>
               </select>
             </label>
+            <button
+              type="button"
+              className="small"
+              onClick={() => setAccounts((prev) => prev.map((a) => ({ ...a, resetTime: '' })))}
+            >
+              清空所有重置時間
+            </button>
           </div>
 
           <div className="accounts-list">

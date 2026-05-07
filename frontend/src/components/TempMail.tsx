@@ -21,9 +21,15 @@ const tabs = [
 
 type TabId = (typeof tabs)[number]['id'];
 
+type GitHubFocusRequest = {
+  mailboxId: string;
+  requestId: string;
+};
+
 export default function TempMail() {
   const [activeTab, setActiveTab] = useState<TabId>('temporary');
   const [requestedPromotion, setRequestedPromotion] = useState<PersistentPromotionRequest | null>(null);
+  const [githubFocusRequest, setGitHubFocusRequest] = useState<GitHubFocusRequest | null>(null);
   const [syncReady, setSyncReady] = useState(false);
 
   useEffect(() => {
@@ -105,10 +111,21 @@ export default function TempMail() {
         />
       </div>
       <div hidden={activeTab !== 'persistent'} aria-hidden={activeTab !== 'persistent'}>
-        <PersistentMailboxPanel isActive={activeTab === 'persistent'} requestedPromotion={requestedPromotion} />
+        <PersistentMailboxPanel
+          isActive={activeTab === 'persistent'}
+          requestedPromotion={requestedPromotion}
+          onJumpToGitHubAccount={(mailboxId) => {
+            setGitHubFocusRequest({ mailboxId, requestId: `${mailboxId}-${Date.now()}` });
+            setActiveTab('github');
+          }}
+        />
       </div>
       <div hidden={activeTab !== 'github'} aria-hidden={activeTab !== 'github'}>
-        <GitHubAccountPanel onViewMailbox={() => setActiveTab('persistent')} />
+        <GitHubAccountPanel
+          onViewMailbox={() => setActiveTab('persistent')}
+          focusMailboxId={githubFocusRequest?.mailboxId ?? null}
+          focusRequestId={githubFocusRequest?.requestId ?? ''}
+        />
       </div>
     </section>
   );
