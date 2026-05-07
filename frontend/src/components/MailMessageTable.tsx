@@ -7,7 +7,11 @@ type Props = {
   messages: MailMessage[];
   onMarkRead?: (messageId: string, isRead: boolean) => void | Promise<void>;
   onCleanup?: () => void | Promise<void>;
+  onDeleteAll?: () => void | Promise<void>;
   cleanupLabel?: string;
+  deleteAllLabel?: string;
+  defaultCollapsed?: boolean;
+  onCollapsedChange?: (isCollapsed: boolean) => void;
 };
 
 type MessageViewMode = 'html' | 'text';
@@ -43,12 +47,29 @@ function normalizeSubject(subject?: string) {
   return value === WORKER_PLACEHOLDER_SUBJECT ? '' : value;
 }
 
-export default function MailMessageTable({ messages, onMarkRead, onCleanup, cleanupLabel = '清理已讀郵件' }: Props) {
+export default function MailMessageTable({
+  messages,
+  onMarkRead,
+  onCleanup,
+  onDeleteAll,
+  cleanupLabel = '清理已讀郵件',
+  deleteAllLabel = '刪除全部郵件',
+  defaultCollapsed = false,
+  onCollapsedChange,
+}: Props) {
   const [pendingMessageId, setPendingMessageId] = useState<string | null>(null);
   const [expandedMessageId, setExpandedMessageId] = useState<string | null>(null);
+  const [sectionCollapsed, setSectionCollapsed] = useState(defaultCollapsed);
   const [expandedMode, setExpandedMode] = useState<MessageViewMode>('text');
   const [isCleaningUp, setIsCleaningUp] = useState(false);
   const [isMarkingAllRead, setIsMarkingAllRead] = useState(false);
+  const [isDeletingAll, setIsDeletingAll] = useState(false);
+
+  const handleCollapsedToggle = () => {
+    const newCollapsed = !sectionCollapsed;
+    setSectionCollapsed(newCollapsed);
+    onCollapsedChange?.(newCollapsed);
+  };
 
   const handleCleanupClick = async () => {
     if (!onCleanup || isCleaningUp) {
@@ -64,7 +85,7 @@ export default function MailMessageTable({ messages, onMarkRead, onCleanup, clea
   };
 
   const handleMarkAllReadClick = async () => {
-    if (!onMarkRead || isMarkingAllRead || pendingMessageId) {
+    if (!onMarkRead || isMarkingAllRead || pendingMessageId || isDeletingAll) {
       return;
     }
 
@@ -77,6 +98,25 @@ export default function MailMessageTable({ messages, onMarkRead, onCleanup, clea
       }
     } finally {
       setIsMarkingAllRead(false);
+    }
+  };
+
+  const handleDeleteAllClick = async () => {
+    if (!onDeleteAll || isDeletingAll || pendingMessageId || isCleaningUp || isMarkingAllRead || messages.length === 0) {
+      return;
+    }
+
+    const confirmed = window.confirm('確定要刪除目前信箱的全部郵件嗎？此操作無法復原。');
+    if (!confirmed) {
+      return;
+    }
+
+    setIsDeletingAll(true);
+    try {
+      await onDeleteAll();
+      setExpandedMessageId(null);
+    } finally {
+      setIsDeletingAll(false);
     }
   };
 
@@ -120,7 +160,17 @@ export default function MailMessageTable({ messages, onMarkRead, onCleanup, clea
   return (
     <div className="message-section">
       <div className="message-section__header">
-        <h3>收到的信件</h3>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <button 
+            type="button" 
+            className="secondary small collapse-toggle"
+            onClick={handleCollapsedToggle}
+            title={sectionCollapsed ? '展開' : '收合'}
+          >
+            <span aria-hidden="true">{sectionCollapsed ? '▶' : '▼'}</span>
+          </button>
+          <h3>收到的信件</h3>
+        </div>
         <div className="message-section__actions">
           <span>{messages.length} 封</span>
           {onMarkRead ? (
@@ -132,21 +182,36 @@ export default function MailMessageTable({ messages, onMarkRead, onCleanup, clea
             </button>
           ) : null}
           {onCleanup ? (
-            <button type="button" className="secondary small" onClick={() => void handleCleanupClick()} disabled={isCleaningUp || pendingMessageId !== null}>
+            <button type="button" className="secondary small" onClick={() => void handleCleanupClick()} disabled={isCleaningUp || isDeletingAll || pendingMessageId !== null}>
               <span className="button-content">
                 {isCleaningUp ? <span className="button-spinner" aria-hidden="true" /> : null}
                 <span>{isCleaningUp ? '清理中...' : cleanupLabel}</span>
               </span>
             </button>
           ) : null}
+          {onDeleteAll ? (
+            <button
+              type="button"
+              className="danger small"
+              onClick={() => void handleDeleteAllClick()}
+              disabled={isDeletingAll || isCleaningUp || isMarkingAllRead || pendingMessageId !== null || messages.length === 0}
+            >
+              <span className="button-content">
+                {isDeletingAll ? <span className="button-spinner" aria-hidden="true" /> : null}
+                <span>{isDeletingAll ? '刪除中...' : deleteAllLabel}</span>
+              </span>
+            </button>
+          ) : null}
         </div>
       </div>
 
-      {messages.length === 0 ? (
-        <div className="empty-state">目前尚未收到任何郵件。</div>
-      ) : (
-        <div className="table-wrapper">
-          <table>
+      {!sectionCollapsed && (
+        <>
+          {messages.length === 0 ? (
+            <div className="empty-state">目前尚未收到任何郵件。</div>
+          ) : (
+            <div className="table-wrapper">
+              <table>
             <thead>
               <tr>
                 <th>時間</th>
@@ -281,7 +346,9 @@ export default function MailMessageTable({ messages, onMarkRead, onCleanup, clea
               })}
             </tbody>
           </table>
-        </div>
+            </div>
+          )}
+        </>
       )}
     </div>
   );

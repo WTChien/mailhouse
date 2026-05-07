@@ -22,6 +22,10 @@ type Props = {
 };
 
 function scopeLabel(scope: string) {
+  if (scope.startsWith('mailbox:')) {
+    return `信箱：${scope.slice(8)}`;
+  }
+
   if (scope.startsWith('tag:')) {
     return scope.slice(4) || '自訂分類';
   }
@@ -38,6 +42,10 @@ function scopeLabel(scope: string) {
 }
 
 function scopeDefaultTag(scope: string) {
+  if (scope.startsWith('mailbox:')) {
+    return '';
+  }
+
   if (scope.startsWith('tag:')) {
     return normalizeScopeTag(scope.slice(4));
   }

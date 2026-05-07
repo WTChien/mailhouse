@@ -1,25 +1,107 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getClientSyncState, updateClientSyncState } from '../lib/api';
-import { SavedMailboxItem } from './mailboxUtils';
+import { SavedMailboxItem, readRegistrationDrafts } from './mailboxUtils';
 
 type GitHubAccountStatus = 'unused' | 'active' | 'half' | 'exhausted';
 
 type GitHubAccount = {
   mailboxId: string;
+  tag: string;
   username: string;
   password: string;
   resetTime: string;
   status: GitHubAccountStatus;
+  showPassword?: boolean;
 };
 
 type GitHubAccountPanelProps = {
-  onViewMailbox: () => void;
+  onViewMailbox: (mailboxId: string) => void;
   focusMailboxId?: string | null;
   focusRequestId?: string;
 };
 
 const GITHUB_ACCOUNT_SETTINGS_KEY = 'mailhouse.githubAccountSettings';
-const FIRESTORE_COLLECTION = 'github_accounts';
+const GITHUB_ACCOUNT_PASSWORDS_KEY = 'mailhouse.githubAccountPasswords';
+const GITHUB_ACCOUNT_USERNAMES_KEY = 'mailhouse.githubAccountUsernames';
+
+function normalizeTag(value: string) {
+  return value.trim().replace(/\s+/g, ' ');
+}
+
+function normalizeGitHubUsername(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 39);
+}
+
+function resolveGitHubUsername(candidate: string | undefined, mailboxId: string) {
+  const normalized = normalizeGitHubUsername(candidate ?? '');
+  if (normalized) {
+    return normalized;
+  }
+
+  const fallback = normalizeGitHubUsername(mailboxId);
+  return fallback || 'github-user';
+}
+
+function loadStoredPasswords() {
+  if (typeof window === 'undefined') {
+    return {} as Record<string, string>;
+  }
+
+  try {
+    const raw = window.localStorage.getItem(GITHUB_ACCOUNT_PASSWORDS_KEY);
+    if (!raw) {
+      return {};
+    }
+    return JSON.parse(raw) as Record<string, string>;
+  } catch {
+    return {};
+  }
+}
+
+function saveStoredPasswords(passwords: Record<string, string>) {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  try {
+    window.localStorage.setItem(GITHUB_ACCOUNT_PASSWORDS_KEY, JSON.stringify(passwords));
+  } catch (error) {
+    console.error('Failed to save passwords:', error);
+  }
+}
+
+function loadStoredUsernames() {
+  if (typeof window === 'undefined') {
+    return {} as Record<string, string>;
+  }
+
+  try {
+    const raw = window.localStorage.getItem(GITHUB_ACCOUNT_USERNAMES_KEY);
+    if (!raw) {
+      return {};
+    }
+    return JSON.parse(raw) as Record<string, string>;
+  } catch {
+    return {};
+  }
+}
+
+function saveStoredUsernames(usernames: Record<string, string>) {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  try {
+    window.localStorage.setItem(GITHUB_ACCOUNT_USERNAMES_KEY, JSON.stringify(usernames));
+  } catch (error) {
+    console.error('Failed to save usernames:', error);
+  }
+}
 
 const STATUS_LABELS: Record<GitHubAccountStatus, string> = {
   unused: '未使用',
@@ -112,7 +194,7 @@ async function syncAccountSettingsToFirestore(accounts: GitHubAccount[]) {
     // Note: This stores the settings in registrationDrafts temporarily until a dedicated API is created
     await updateClientSyncState({
       registrationDrafts: {
-        _github_accounts_meta: {
+        _account_management_meta: {
           generatedName: JSON.stringify(payload),
           generatedPassword: 'meta',
           updatedAt: new Date().toISOString(),
@@ -130,39 +212,68 @@ export default function GitHubAccountPanel({
   focusRequestId = '',
 }: GitHubAccountPanelProps) {
   const [accounts, setAccounts] = useState<GitHubAccount[]>([]);
+  const [activeManagementTag, setActiveManagementTag] = useState('github');
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState<GitHubAccountStatus | 'all'>('all');
   const [sortOrder, setSortOrder] = useState<'name' | 'status' | 'reset'>('status');
+  const [focusOnlyMailboxId, setFocusOnlyMailboxId] = useState<string | null>(null);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
-  const syncTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const syncTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const handledFocusRequestIdRef = useRef('');
 
-  useEffect(() => {
-    const loadAccounts = async () => {
-      try {
-        const cloudData = await getClientSyncState();
-        const githubMailboxes = cloudData.savedMailboxes.filter(
-          (item: SavedMailboxItem) => item.tag === 'github'
-        );
+  const loadAccounts = useCallback(async () => {
+    try {
+      const cloudData = await getClientSyncState();
+      const taggedMailboxes = cloudData.savedMailboxes
+        .map((item: SavedMailboxItem) => ({ ...item, tag: normalizeTag(item.tag ?? '') }))
+        .filter((item: SavedMailboxItem) => item.tag !== '');
 
-        const persistedSettings = loadStoredAccountSettings();
-        const nextAccounts = githubMailboxes.map((item) => ({
+      const persistedSettings = loadStoredAccountSettings();
+      const storedPasswords = loadStoredPasswords();
+      const storedUsernames = loadStoredUsernames();
+      const registrationDrafts = readRegistrationDrafts();
+      
+      const nextAccounts = taggedMailboxes.map((item) => {
+        // Try to get password from: stored cache -> registration draft -> generate default
+        let password = storedPasswords[item.mailboxId];
+        if (!password) {
+          const scope = `mailbox:${item.mailboxId}`;
+          const draft = registrationDrafts[scope];
+          password = draft?.generatedPassword || `pass_${item.mailboxId}`;
+        }
+        
+        // Try to get username from: stored cache -> registration draft -> generate default
+        let username = storedUsernames[item.mailboxId];
+        if (!username) {
+          const scope = `mailbox:${item.mailboxId}`;
+          const draft = registrationDrafts[scope];
+          username = draft?.generatedName || item.mailboxId;
+        }
+        username = resolveGitHubUsername(username, item.mailboxId);
+        
+        return {
           mailboxId: item.mailboxId,
-          username: `user_${item.mailboxId}`,
-          password: `pass_${item.mailboxId}`,
+          tag: item.tag,
+          username,
+          password,
           resetTime: persistedSettings[item.mailboxId]?.resetTime ?? '',
           status: persistedSettings[item.mailboxId]?.status ?? 'unused',
-        })).map((account) => applyResetWhenDue(account));
+          showPassword: false,
+        };
+      }).map((account) => applyResetWhenDue(account));
 
-        setAccounts(nextAccounts);
-      } catch (error) {
-        console.error('Failed to load GitHub accounts:', error);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    void loadAccounts();
+      setAccounts(nextAccounts);
+    } catch (error) {
+      console.error('Failed to load GitHub accounts:', error);
+    } finally {
+      setLoading(false);
+    }
   }, []);
+
+  useEffect(() => {
+    void loadAccounts();
+  }, [loadAccounts]);
 
   // Save to localStorage immediately (for fast local access)
   useEffect(() => {
@@ -226,7 +337,12 @@ export default function GitHubAccountPanel({
   }, [accounts, loading]);
 
   useEffect(() => {
-    if (loading || !focusMailboxId) {
+    if (loading || !focusMailboxId || !focusRequestId) {
+      return;
+    }
+
+    // Only apply focus once per requestId
+    if (handledFocusRequestIdRef.current === focusRequestId) {
       return;
     }
 
@@ -235,13 +351,50 @@ export default function GitHubAccountPanel({
       return;
     }
 
+    const target = accounts.find((account) => account.mailboxId === focusMailboxId);
+
+    handledFocusRequestIdRef.current = focusRequestId;
+    setActiveManagementTag(target?.tag ?? 'github');
     setStatusFilter('all');
     setSortOrder('name');
+    setFocusOnlyMailboxId(focusMailboxId);
     setExpandedIds(new Set([focusMailboxId]));
-  }, [accounts, focusMailboxId, focusRequestId, loading]);
+  }, [focusMailboxId, focusRequestId, loading, accounts]);
+
+  const managementTags = useMemo(() => {
+    const uniqueTags = Array.from(new Set(accounts.map((item) => item.tag)));
+    uniqueTags.sort((a, b) => {
+      if (a.toLowerCase() === 'github') {
+        return -1;
+      }
+
+      if (b.toLowerCase() === 'github') {
+        return 1;
+      }
+
+      return a.localeCompare(b, 'zh-Hant');
+    });
+
+    return uniqueTags;
+  }, [accounts]);
+
+  useEffect(() => {
+    if (managementTags.length === 0) {
+      return;
+    }
+
+    if (managementTags.includes(activeManagementTag)) {
+      return;
+    }
+
+    const githubTag = managementTags.find((item) => item.toLowerCase() === 'github');
+    setActiveManagementTag(githubTag ?? managementTags[0]);
+  }, [activeManagementTag, managementTags]);
 
   const visibleAccounts = useMemo(() => {
     return [...accounts]
+      .filter((account) => !focusOnlyMailboxId || account.mailboxId === focusOnlyMailboxId)
+      .filter((account) => account.tag === activeManagementTag)
       .filter((account) => statusFilter === 'all' || account.status === statusFilter)
       .sort((a, b) => {
         if (sortOrder === 'name') {
@@ -266,12 +419,31 @@ export default function GitHubAccountPanel({
 
         return new Date(a.resetTime).getTime() - new Date(b.resetTime).getTime();
       });
-  }, [accounts, statusFilter, sortOrder]);
+  }, [accounts, activeManagementTag, statusFilter, sortOrder, focusOnlyMailboxId]);
 
   const updateAccount = (mailboxId: string, changes: Partial<Omit<GitHubAccount, 'mailboxId'>>) => {
+    const normalizedChanges = { ...changes };
+    if (typeof normalizedChanges.username === 'string') {
+      normalizedChanges.username = resolveGitHubUsername(normalizedChanges.username, mailboxId);
+    }
+
     setAccounts((prev) => prev.map((account) => (
-      account.mailboxId === mailboxId ? { ...account, ...changes } : account
+      account.mailboxId === mailboxId ? { ...account, ...normalizedChanges } : account
     )));
+    
+    // Persist password changes
+    if (normalizedChanges.password) {
+      const storedPasswords = loadStoredPasswords();
+      storedPasswords[mailboxId] = normalizedChanges.password;
+      saveStoredPasswords(storedPasswords);
+    }
+    
+    // Persist username changes
+    if (normalizedChanges.username) {
+      const storedUsernames = loadStoredUsernames();
+      storedUsernames[mailboxId] = normalizedChanges.username;
+      saveStoredUsernames(storedUsernames);
+    }
   };
 
   const handleCopy = async (text: string) => {
@@ -282,8 +454,17 @@ export default function GitHubAccountPanel({
     }
   };
 
-  const handleViewMailbox = () => {
-    onViewMailbox();
+  const handleViewMailbox = (mailboxId: string) => {
+    onViewMailbox(mailboxId);
+  };
+
+  const handleRefresh = async () => {
+    setIsRefreshing(true);
+    try {
+      await loadAccounts();
+    } finally {
+      setIsRefreshing(false);
+    }
   };
 
   const toggleExpanded = (mailboxId: string) => {
@@ -305,18 +486,52 @@ export default function GitHubAccountPanel({
   return (
     <div className="github-accounts-panel">
       <div className="panel-header">
-        <h2>GitHub 帳號管理</h2>
-        <p>管理標籤為 GitHub 的帳號清單</p>
+        <h2>{activeManagementTag ? `${activeManagementTag} 帳號管理` : '帳號管理'}</h2>
+        <p>依保留信箱標籤分組管理帳號。可直接在這裡自訂名稱與密碼。</p>
       </div>
+
+      {managementTags.length > 0 && !focusOnlyMailboxId ? (
+        <div className="account-navbar" role="tablist" aria-label="帳號管理分類">
+          {managementTags.map((tag) => (
+            <button
+              key={tag}
+              type="button"
+              className={`account-tab ${activeManagementTag === tag ? 'active' : ''}`}
+              onClick={() => {
+                setActiveManagementTag(tag);
+                setExpandedIds(new Set());
+              }}
+            >
+              {tag}帳號管理
+            </button>
+          ))}
+        </div>
+      ) : null}
+
+      {focusOnlyMailboxId ? (
+        <div className="saved-list-toolbar">
+          <p className="muted">已聚焦顯示：{focusOnlyMailboxId}@gradaide.xyz</p>
+          <button
+            type="button"
+            className="small"
+            onClick={() => {
+              setFocusOnlyMailboxId(null);
+              setExpandedIds(new Set());
+            }}
+          >
+            顯示全部帳號
+          </button>
+        </div>
+      ) : null}
 
       {accounts.length === 0 ? (
         <div className="empty-state">
-          <p>尚未有任何 GitHub 帳號。</p>
-          <p>請在保留信箱頁面新增標籤為 "github" 的信箱。</p>
+          <p>尚未有任何已標籤的帳號。</p>
+          <p>請在保留信箱頁面替信箱設定標籤後回來管理。</p>
         </div>
       ) : visibleAccounts.length === 0 ? (
         <div className="empty-state">
-          <p>當前篩選條件未找到任何 GitHub 帳號。</p>
+          <p>當前篩選條件未找到任何 {activeManagementTag} 帳號。</p>
           <p>請調整狀態篩選或排序。</p>
         </div>
       ) : (
@@ -349,6 +564,14 @@ export default function GitHubAccountPanel({
             <button
               type="button"
               className="small"
+              onClick={() => void handleRefresh()}
+              disabled={isRefreshing}
+            >
+              {isRefreshing ? '同步中...' : '同步帳號'}
+            </button>
+            <button
+              type="button"
+              className="small"
               onClick={() => setAccounts((prev) => prev.map((a) => ({ ...a, resetTime: '' })))}
             >
               清空所有重置時間
@@ -365,7 +588,16 @@ export default function GitHubAccountPanel({
                   onClick={() => toggleExpanded(account.mailboxId)}
                   style={{ cursor: 'pointer', userSelect: 'none' }}
                 >
-                  <h3>{account.mailboxId}@gradaide.xyz</h3>
+                  <h3
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void handleCopy(`${account.mailboxId}@gradaide.xyz`);
+                    }}
+                    style={{ cursor: 'pointer' }}
+                    title="點擊複製"
+                  >
+                    {account.mailboxId}@gradaide.xyz
+                  </h3>
                   <span className={`status-badge ${account.status}`}>
                     {STATUS_LABELS[account.status]}
                   </span>
@@ -399,7 +631,12 @@ export default function GitHubAccountPanel({
 
                       <div className="detail-row">
                         <label>使用者名稱：</label>
-                        <input type="text" value={account.username} readOnly className="copy-input" />
+                        <input 
+                          type="text" 
+                          value={account.username} 
+                          onChange={(event) => updateAccount(account.mailboxId, { username: event.target.value })}
+                          className="copy-input" 
+                        />
                         <button type="button" className="small" onClick={() => handleCopy(account.username)}>
                           複製
                         </button>
@@ -407,7 +644,21 @@ export default function GitHubAccountPanel({
 
                       <div className="detail-row">
                         <label>密碼：</label>
-                        <input type="password" value={account.password} readOnly className="copy-input" />
+                        <input 
+                          type={account.showPassword ? 'text' : 'password'} 
+                          value={account.password} 
+                          onChange={(event) => updateAccount(account.mailboxId, { password: event.target.value })}
+                          className="copy-input" 
+                        />
+                        <button 
+                          type="button" 
+                          className="small secondary"
+                          onClick={() => updateAccount(account.mailboxId, { showPassword: !account.showPassword })}
+                          title={account.showPassword ? '隱藏密碼' : '顯示密碼'}
+                          aria-label={account.showPassword ? '隱藏密碼' : '顯示密碼'}
+                        >
+                          {account.showPassword ? '👁️ 隱藏' : '🙈 顯示'}
+                        </button>
                         <button type="button" className="small" onClick={() => handleCopy(account.password)}>
                           複製
                         </button>
@@ -428,7 +679,7 @@ export default function GitHubAccountPanel({
                     </div>
 
                     <div className="account-actions">
-                      <button type="button" onClick={handleViewMailbox}>
+                      <button type="button" onClick={() => handleViewMailbox(account.mailboxId)}>
                         查看信箱
                       </button>
                     </div>

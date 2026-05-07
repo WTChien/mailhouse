@@ -3,24 +3,22 @@ import {
   MAIL_DOMAIN,
   cleanupReadMessages,
   createTemporaryMailbox,
-  extendTemporaryMailbox,
+  deleteAllMailboxMessages,
   getMailboxMessages,
   markMessageRead,
   promoteMailboxToPersistent,
 } from '../lib/api';
 import MailMessageTable from './MailMessageTable';
-import RegistrationHelperPanel from './RegistrationHelperPanel';
 import {
-  INITIAL_SECONDS,
-  TEMP_MAILBOX_MINUTES,
   clearTemporaryMailboxState,
-  formatCountdown,
   readTemporaryMailboxState,
   writeTemporaryMailboxState,
+  readAutoRefreshEnabled,
+  writeAutoRefreshEnabled,
   type MailMessage,
 } from './mailboxUtils';
 
-type BusyAction = 'create' | 'extend' | 'move' | null;
+type BusyAction = 'create' | 'move' | null;
 
 type TemporaryMailboxPanelProps = {
   isActive?: boolean;
@@ -30,40 +28,27 @@ type TemporaryMailboxPanelProps = {
 export default function TemporaryMailboxPanel({ isActive = true, onMoveToPersistent }: TemporaryMailboxPanelProps) {
   const initialTemporaryMailbox = readTemporaryMailboxState();
   const [mailboxId, setMailboxId] = useState(initialTemporaryMailbox?.mailboxId ?? '');
-  const [expireAt, setExpireAt] = useState<Date | null>(() =>
-    initialTemporaryMailbox?.expireAt ? new Date(initialTemporaryMailbox.expireAt) : null,
-  );
-  const [secondsLeft, setSecondsLeft] = useState(() => {
-    if (!initialTemporaryMailbox?.expireAt) {
-      return INITIAL_SECONDS;
-    }
-
-    return Math.max(0, Math.ceil((new Date(initialTemporaryMailbox.expireAt).getTime() - Date.now()) / 1000));
-  });
   const [messages, setMessages] = useState<MailMessage[]>([]);
   const [statusText, setStatusText] = useState(
     initialTemporaryMailbox?.mailboxId
-      ? `已恢復上次的 ${TEMP_MAILBOX_MINUTES} 分鐘信箱`
-      : `正在建立 ${TEMP_MAILBOX_MINUTES} 分鐘信箱...`,
+      ? '已恢復上次的信箱'
+      : '正在建立新信箱...',
   );
   const [errorText, setErrorText] = useState('');
   const [copied, setCopied] = useState(false);
   const [busyAction, setBusyAction] = useState<BusyAction>(null);
-  const [didAutoReset, setDidAutoReset] = useState(false);
-  const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(false);
 
   const emailAddress = useMemo(() => (mailboxId ? `${mailboxId}@${MAIL_DOMAIN}` : ''), [mailboxId]);
   const isBusy = busyAction !== null;
   const isCreating = busyAction === 'create';
-  const isExtending = busyAction === 'extend';
   const isMoving = busyAction === 'move';
 
   const syncMessages = async (targetMailboxId: string) => {
     try {
       const data = await getMailboxMessages(targetMailboxId);
       setMessages(data.messages ?? []);
-      setExpireAt(data.expireAt ? new Date(data.expireAt) : null);
     } catch (error) {
       console.error(error);
       setErrorText(error instanceof Error ? error.message : '載入信件失敗，請稍後再試。');
@@ -76,22 +61,28 @@ export default function TemporaryMailboxPanel({ isActive = true, onMoveToPersist
     try {
       const data = await createTemporaryMailbox();
       setMailboxId(data.mailboxId);
-      setExpireAt(data.expireAt ? new Date(data.expireAt) : null);
-      setSecondsLeft(INITIAL_SECONDS);
       setMessages([]);
       setCopied(false);
-      setDidAutoReset(false);
-      setStatusText(`${TEMP_MAILBOX_MINUTES} 分鐘信箱可用中`);
+      setStatusText('新信箱已建立');
       setErrorText('');
       await syncMessages(data.mailboxId);
     } catch (error) {
       console.error(error);
       setStatusText('初始化失敗');
-      setErrorText(error instanceof Error ? error.message : `建立 ${TEMP_MAILBOX_MINUTES} 分鐘信箱失敗。`);
+      setErrorText(error instanceof Error ? error.message : '建立新信箱失敗。');
     } finally {
       setBusyAction(null);
     }
   };
+
+  useEffect(() => {
+    writeAutoRefreshEnabled(autoRefreshEnabled);
+  }, [autoRefreshEnabled]);
+
+  useEffect(() => {
+    // Initialize auto refresh enabled state from localStorage
+    setAutoRefreshEnabled(readAutoRefreshEnabled());
+  }, []);
 
   useEffect(() => {
     if (!mailboxId) {
@@ -99,20 +90,20 @@ export default function TemporaryMailboxPanel({ isActive = true, onMoveToPersist
       return;
     }
 
-    setStatusText(`已恢復上次的 ${TEMP_MAILBOX_MINUTES} 分鐘信箱`);
+    setStatusText('已恢復上次的信箱');
   }, []);
 
   useEffect(() => {
-    if (!mailboxId || !expireAt) {
+    if (!mailboxId) {
       clearTemporaryMailboxState();
       return;
     }
 
     writeTemporaryMailboxState({
       mailboxId,
-      expireAt: expireAt.toISOString(),
+      expireAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(), // Store expireAt for compatibility
     });
-  }, [expireAt, mailboxId]);
+  }, [mailboxId]);
 
   useEffect(() => {
     if (!isActive || !mailboxId || !autoRefreshEnabled) {
@@ -137,34 +128,6 @@ export default function TemporaryMailboxPanel({ isActive = true, onMoveToPersist
     setIsRefreshing(false);
   };
 
-  useEffect(() => {
-    if (!expireAt) {
-      return;
-    }
-
-    const updateRemaining = () => {
-      const remaining = Math.max(0, Math.ceil((expireAt.getTime() - Date.now()) / 1000));
-      setSecondsLeft(remaining);
-
-      if (remaining === 0) {
-        setStatusText(`信箱已到期，正在重建新的 ${TEMP_MAILBOX_MINUTES} 分鐘信箱...`);
-      }
-    };
-
-    updateRemaining();
-    const timer = window.setInterval(updateRemaining, 1000);
-    return () => window.clearInterval(timer);
-  }, [expireAt]);
-
-  useEffect(() => {
-    if (secondsLeft !== 0 || !mailboxId || isBusy || didAutoReset) {
-      return;
-    }
-
-    setDidAutoReset(true);
-    void handleCreateMailbox();
-  }, [didAutoReset, isBusy, mailboxId, secondsLeft]);
-
   const handleCopy = async () => {
     if (!emailAddress) {
       return;
@@ -180,30 +143,8 @@ export default function TemporaryMailboxPanel({ isActive = true, onMoveToPersist
     }
   };
 
-  const handleExtend = async () => {
-    if (!mailboxId) {
-      return;
-    }
-
-    setBusyAction('extend');
-
-    try {
-      const data = await extendTemporaryMailbox(mailboxId);
-      setExpireAt(data.expireAt ? new Date(data.expireAt) : null);
-      setDidAutoReset(false);
-      setStatusText(`已延長 ${TEMP_MAILBOX_MINUTES} 分鐘`);
-      setErrorText('');
-      await syncMessages(mailboxId);
-    } catch (error) {
-      console.error(error);
-      setErrorText(error instanceof Error ? error.message : '延長時間失敗，請稍後再試。');
-    } finally {
-      setBusyAction(null);
-    }
-  };
-
   const handleMoveToPersistent = async () => {
-    if (!mailboxId || !expireAt) {
+    if (!mailboxId) {
       return;
     }
 
@@ -211,9 +152,6 @@ export default function TemporaryMailboxPanel({ isActive = true, onMoveToPersist
 
     try {
       const data = await promoteMailboxToPersistent(mailboxId);
-      setExpireAt(data.expireAt ? new Date(data.expireAt) : null);
-      setSecondsLeft(INITIAL_SECONDS);
-      setDidAutoReset(true);
       setStatusText('已移至保留信箱');
       setErrorText('');
       await syncMessages(data.mailboxId);
@@ -252,73 +190,78 @@ export default function TemporaryMailboxPanel({ isActive = true, onMoveToPersist
     }
   };
 
-  const isExpired = Boolean(expireAt) && secondsLeft === 0;
+  const handleDeleteAll = async () => {
+    if (!mailboxId) {
+      return;
+    }
+
+    try {
+      await deleteAllMailboxMessages(mailboxId);
+      await syncMessages(mailboxId);
+    } catch (error) {
+      console.error(error);
+      setErrorText(error instanceof Error ? error.message : '刪除全部郵件失敗。');
+    }
+  };
 
   return (
     <section className="mail-card">
       <div className="mail-card__header">
         <div>
-          <h2>{TEMP_MAILBOX_MINUTES} 分鐘信箱</h2>
+          <h2>新增信箱</h2>
         </div>
-        <span className={`status-badge ${isExpired ? 'expired' : 'active'}`}>{statusText}</span>
+        <span className="status-badge active">{statusText}</span>
       </div>
 
       <div className="mail-insights two-col">
         <article className="insight-card">
           <span>目前地址</span>
-          <strong>{emailAddress || '建立中...'}</strong>
-        </article>
-        <article className="insight-card">
-          <span>剩餘時間</span>
-          <strong>{mailboxId && !expireAt ? '已保留' : formatCountdown(secondsLeft)}</strong>
+          <strong
+            onClick={() => emailAddress && void handleCopy()}
+            style={{ cursor: emailAddress ? 'pointer' : 'default' }}
+            title={emailAddress ? '點擊即複製' : ''}
+          >
+            {emailAddress || '建立中...'}
+          </strong>
+          {emailAddress && (
+            <p className="muted insight-card__hint">
+              ✓ 點擊即複製
+              {copied && <span> (已複製)</span>}
+            </p>
+          )}
         </article>
       </div>
 
       <div className="mailbox-box">
         <div>
           <p className="field-label">操作</p>
-          <p className="muted">切換 navbar 或重新整理頁面都不會重設信箱，只有到期後或你手動產生新信箱時才會更新。</p>
         </div>
-        <div className="mailbox-actions">
-          <button type="button" onClick={handleCopy} disabled={!emailAddress}>
-            {copied ? '已複製' : '複製信箱'}
-          </button>
-          <button
-            type="button"
-            className="secondary"
-            onClick={() => setAutoRefreshEnabled((prev) => !prev)}
-            disabled={!mailboxId}
-          >
-            {autoRefreshEnabled ? '關閉自動刷新' : '開啟自動刷新'}
-          </button>
-          <button type="button" className="secondary" onClick={() => void handleRefreshNow()} disabled={!mailboxId || isRefreshing}>
-            <span className="button-content">
-              {isRefreshing ? <span className="button-spinner" aria-hidden="true" /> : null}
-              <span>{isRefreshing ? '刷新中...' : '立即刷新'}</span>
-            </span>
-          </button>
-          <button type="button" className="secondary" onClick={() => void handleCreateMailbox()} disabled={isBusy}>
+        <div className="mailbox-actions mailbox-actions-new-layout">
+          <button type="button" className="secondary tiny" onClick={() => void handleCreateMailbox()} disabled={isBusy}>
             <span className="button-content">
               {isCreating ? <span className="button-spinner" aria-hidden="true" /> : null}
               <span>{isCreating ? '產生中...' : '產生新信箱'}</span>
             </span>
           </button>
-          <button type="button" className="secondary" onClick={handleMoveToPersistent} disabled={!mailboxId || !expireAt || isBusy}>
+          <button type="button" className="secondary tiny" onClick={handleMoveToPersistent} disabled={!mailboxId || isBusy}>
             <span className="button-content">
               {isMoving ? <span className="button-spinner" aria-hidden="true" /> : null}
               <span>{isMoving ? '移動中...' : '移至保留信箱'}</span>
             </span>
           </button>
-          <button type="button" className="secondary" onClick={handleExtend} disabled={!mailboxId || !expireAt || isBusy}>
+          <button 
+            type="button" 
+            className="secondary tiny refresh-arrow" 
+            onClick={() => void handleRefreshNow()} 
+            disabled={!mailboxId || isRefreshing}
+            title="刷新"
+          >
             <span className="button-content">
-              {isExtending ? <span className="button-spinner" aria-hidden="true" /> : null}
-              <span>{isExtending ? '延長中...' : `延長 ${TEMP_MAILBOX_MINUTES} 分鐘`}</span>
+              {isRefreshing ? <span className="button-spinner" aria-hidden="true" /> : <span aria-hidden="true">↻</span>}
             </span>
           </button>
         </div>
       </div>
-
-      <RegistrationHelperPanel />
 
       {errorText ? <p className="error-text">{errorText}</p> : null}
 
@@ -326,7 +269,13 @@ export default function TemporaryMailboxPanel({ isActive = true, onMoveToPersist
         messages={messages}
         onMarkRead={handleMarkRead}
         onCleanup={handleCleanup}
+        onDeleteAll={handleDeleteAll}
         cleanupLabel="清理已讀 + 過期郵件"
+        deleteAllLabel="刪除全部郵件"
+        defaultCollapsed={true}
+        onCollapsedChange={(isCollapsed) => {
+          setAutoRefreshEnabled(!isCollapsed);
+        }}
       />
     </section>
   );

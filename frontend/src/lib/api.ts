@@ -94,6 +94,12 @@ export async function markMessageRead(mailboxId: string, messageId: string, isRe
   );
 }
 
+export async function deleteAllMailboxMessages(mailboxId: string) {
+  return apiRequest<{ status: string; mailboxId: string; deletedMessages: number }>(`/api/mailboxes/${mailboxId}/messages`, {
+    method: 'DELETE',
+  });
+}
+
 export async function cleanupReadMessages(readRetentionHours = 0) {
   return apiRequest<{ status: string; deletedMessages: number; deletedMailboxes: number; readRetentionHours: number }>(
     `/api/cleanup?read_retention_hours=${readRetentionHours}`,

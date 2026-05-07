@@ -28,6 +28,8 @@ export const SAVED_MAILBOXES_KEY = 'mailhouse.savedMailboxes';
 export const TEMP_MAILBOX_STATE_KEY = 'mailhouse.temporaryMailbox';
 export const REGISTRATION_DRAFTS_KEY = 'mailhouse.registrationDrafts';
 export const REGISTRATION_RUNTIME_DRAFT_KEY = 'mailhouse.registrationRuntimeDraft';
+export const SAVED_LIST_COLLAPSED_KEY = 'mailhouse.savedListCollapsed';
+export const AUTO_REFRESH_ENABLED_KEY = 'mailhouse.autoRefreshEnabled';
 
 export type SavedMailboxItem = {
   mailboxId: string;
@@ -343,4 +345,38 @@ export function formatReceivedAt(value?: string | null) {
     minute: '2-digit',
     second: '2-digit',
   }).format(date);
+}
+
+export function readSavedListCollapsed(): boolean {
+  if (typeof window === 'undefined') {
+    return false;
+  }
+
+  const value = window.localStorage.getItem(SAVED_LIST_COLLAPSED_KEY);
+  return value === 'true';
+}
+
+export function writeSavedListCollapsed(collapsed: boolean) {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  window.localStorage.setItem(SAVED_LIST_COLLAPSED_KEY, collapsed ? 'true' : 'false');
+}
+
+export function readAutoRefreshEnabled(): boolean {
+  if (typeof window === 'undefined') {
+    return false;
+  }
+
+  const value = window.localStorage.getItem(AUTO_REFRESH_ENABLED_KEY);
+  return value === 'true';
+}
+
+export function writeAutoRefreshEnabled(enabled: boolean) {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  window.localStorage.setItem(AUTO_REFRESH_ENABLED_KEY, enabled ? 'true' : 'false');
 }

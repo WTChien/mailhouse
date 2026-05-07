@@ -22,7 +22,7 @@ service cloud.firestore {
 
       match /messages/{messageId} {
         allow read: if true;
-        allow write: if false;
+        allow delete: if true;
       }
     }
   }

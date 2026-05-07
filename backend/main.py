@@ -650,6 +650,43 @@ async def mark_message_read(mailbox_id: str, message_id: str, payload: ReadState
     }
 
 
+@app.delete("/api/mailboxes/{mailbox_id}/messages")
+async def delete_all_mailbox_messages(mailbox_id: str) -> dict[str, Any]:
+    prefix = normalize_mailbox_id(mailbox_id or "")
+    if not prefix:
+        raise HTTPException(status_code=400, detail="invalid mailbox id")
+
+    mailbox_ref = db.collection("mailboxes").document(prefix)
+    mailbox_snapshot = mailbox_ref.get()
+    if not mailbox_snapshot.exists:
+        raise HTTPException(status_code=404, detail="mailbox not found")
+
+    deleted_messages = 0
+    batch = db.batch()
+    operations = 0
+
+    for message_doc in mailbox_ref.collection("messages").stream():
+        batch.delete(message_doc.reference)
+        operations += 1
+        deleted_messages += 1
+
+        if operations == 400:
+            batch.commit()
+            batch = db.batch()
+            operations = 0
+
+    if operations:
+        batch.commit()
+
+    mailbox_ref.set({"updatedAt": firestore.SERVER_TIMESTAMP}, merge=True)
+
+    return {
+        "status": "ok",
+        "mailboxId": prefix,
+        "deletedMessages": deleted_messages,
+    }
+
+
 @app.post("/api/cleanup")
 async def cleanup_messages(read_retention_hours: int = Query(default=0, ge=0, le=720)) -> dict[str, Any]:
     result = cleanup_mailboxes_and_messages(read_retention_hours=read_retention_hours)

@@ -14,8 +14,8 @@ import {
 import { getClientSyncState, updateClientSyncState } from '../lib/api';
 
 const tabs = [
-  { id: 'temporary', label: '30 分鐘信箱', hint: '短時驗證收信' },
   { id: 'persistent', label: '保留信箱', hint: '長期分類管理' },
+  { id: 'temporary', label: '新增信箱', hint: '新增臨時信箱' },
   { id: 'github', label: 'GitHub 帳號管理', hint: 'GitHub 帳號追蹤' },
 ] as const;
 
@@ -27,10 +27,11 @@ type GitHubFocusRequest = {
 };
 
 export default function TempMail() {
-  const [activeTab, setActiveTab] = useState<TabId>('temporary');
+  const [activeTab, setActiveTab] = useState<TabId>('persistent');
   const [requestedPromotion, setRequestedPromotion] = useState<PersistentPromotionRequest | null>(null);
   const [githubFocusRequest, setGitHubFocusRequest] = useState<GitHubFocusRequest | null>(null);
   const [syncReady, setSyncReady] = useState(false);
+
 
   useEffect(() => {
     let disposed = false;
@@ -103,10 +104,10 @@ export default function TempMail() {
           onMoveToPersistent={(mailboxId) => {
             setRequestedPromotion({
               mailboxId,
-              registrationDraft: readRegistrationRuntimeDraft(),
               requestId: `${mailboxId}-${Date.now()}`,
             });
-            setActiveTab('persistent');
+            setGitHubFocusRequest({ mailboxId, requestId: `${mailboxId}-${Date.now()}` });
+            setActiveTab('github');
           }}
         />
       </div>
@@ -114,6 +115,8 @@ export default function TempMail() {
         <PersistentMailboxPanel
           isActive={activeTab === 'persistent'}
           requestedPromotion={requestedPromotion}
+          focusMailboxId={githubFocusRequest?.mailboxId ?? null}
+          focusRequestId={githubFocusRequest?.requestId ?? ''}
           onJumpToGitHubAccount={(mailboxId) => {
             setGitHubFocusRequest({ mailboxId, requestId: `${mailboxId}-${Date.now()}` });
             setActiveTab('github');
@@ -122,11 +125,16 @@ export default function TempMail() {
       </div>
       <div hidden={activeTab !== 'github'} aria-hidden={activeTab !== 'github'}>
         <GitHubAccountPanel
-          onViewMailbox={() => setActiveTab('persistent')}
+          onViewMailbox={(mailboxId) => {
+            setGitHubFocusRequest({ mailboxId, requestId: `${mailboxId}-${Date.now()}` });
+            setActiveTab('persistent');
+          }}
           focusMailboxId={githubFocusRequest?.mailboxId ?? null}
           focusRequestId={githubFocusRequest?.requestId ?? ''}
         />
       </div>
+
+
     </section>
   );
 }

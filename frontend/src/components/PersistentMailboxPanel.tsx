@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   cleanupReadMessages,
   createOrLoadPersistentMailbox,
+  deleteAllMailboxMessages,
   deleteMailbox,
   getClientSyncState,
   getMailboxMessages,
@@ -10,12 +11,12 @@ import {
   updateClientSyncState,
 } from '../lib/api';
 import MailMessageTable from './MailMessageTable';
-import RegistrationHelperPanel from './RegistrationHelperPanel';
 import {
   normalizeMailboxId,
   normalizeMailboxTag,
+  readSavedListCollapsed,
+  writeSavedListCollapsed,
   type MailMessage,
-  type RegistrationDraft,
   type SavedMailboxItem,
 } from './mailboxUtils';
 
@@ -24,7 +25,6 @@ type SavedListSort = 'recent' | 'name' | 'tag';
 
 export type PersistentPromotionRequest = {
   mailboxId: string;
-  registrationDraft: RegistrationDraft | null;
   requestId: string;
 };
 
@@ -32,12 +32,16 @@ type PersistentMailboxPanelProps = {
   isActive?: boolean;
   requestedPromotion?: PersistentPromotionRequest | null;
   onJumpToGitHubAccount?: (mailboxId: string) => void;
+  focusMailboxId?: string | null;
+  focusRequestId?: string;
 };
 
 export default function PersistentMailboxPanel({
   isActive = true,
   requestedPromotion = null,
   onJumpToGitHubAccount,
+  focusMailboxId = null,
+  focusRequestId = '',
 }: PersistentMailboxPanelProps) {
   const [mailboxId, setMailboxId] = useState('');
   const [requestedMailboxId, setRequestedMailboxId] = useState('');
@@ -54,16 +58,26 @@ export default function PersistentMailboxPanel({
   const [tagDraftByMailbox, setTagDraftByMailbox] = useState<Record<string, string>>({});
   const [promotionMailboxId, setPromotionMailboxId] = useState('');
   const [promotionTagDraft, setPromotionTagDraft] = useState('');
-  const [promotionDraftOverride, setPromotionDraftOverride] = useState<RegistrationDraft | null>(null);
-  const [promotionDraftKey, setPromotionDraftKey] = useState('');
   const [lastSyncedMailboxes, setLastSyncedMailboxes] = useState<string>('');
   const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [messagesCollapsed, setMessagesCollapsed] = useState(true);
+  const [savedListCollapsed, setSavedListCollapsed] = useState(true);
   const handledPromotionRequestIdRef = useRef('');
+  const handledFocusRequestIdRef = useRef('');
   const cloudLoadedRef = useRef(false);
 
   const emailAddress = useMemo(() => (mailboxId ? `${mailboxId}@${MAIL_DOMAIN}` : ''), [mailboxId]);
   const isBusy = busyAction !== null;
+
+  useEffect(() => {
+    writeSavedListCollapsed(savedListCollapsed);
+  }, [savedListCollapsed]);
+
+  useEffect(() => {
+    // Initialize saved list collapsed state from localStorage
+    setSavedListCollapsed(readSavedListCollapsed());
+  }, []);
 
   useEffect(() => {
     let disposed = false;
@@ -273,11 +287,31 @@ export default function PersistentMailboxPanel({
     setActiveTagNavbar(currentTag || 'all');
     setPromotionMailboxId(targetMailboxId);
     setPromotionTagDraft(currentTag);
-    setPromotionDraftOverride(requestedPromotion.registrationDraft ?? null);
-    setPromotionDraftKey(requestedPromotion.requestId);
     setStatusText('已移至保留信箱，請確認是否套用標籤');
     setErrorText('');
   }, [requestedPromotion, savedMailboxMap]);
+
+  useEffect(() => {
+    if (!focusMailboxId || !focusRequestId || handledFocusRequestIdRef.current === focusRequestId) {
+      return;
+    }
+
+    const targetMailboxId = normalizeMailboxId(focusMailboxId);
+    if (!targetMailboxId) {
+      return;
+    }
+
+    handledFocusRequestIdRef.current = focusRequestId;
+
+    // Load the mailbox without showing promotion UI
+    void (async () => {
+      const success = await openPersistentMailbox(targetMailboxId, savedMailboxMap.get(targetMailboxId)?.tag ?? '');
+      if (success) {
+        setStatusText('');
+        setErrorText('');
+      }
+    })();
+  }, [focusMailboxId, focusRequestId, savedMailboxMap]);
 
   const fallbackMailboxId = useMemo(() => {
     const sorted = [...savedMailboxes].sort((a, b) => new Date(b.lastUsedAt).getTime() - new Date(a.lastUsedAt).getTime());
@@ -343,6 +377,20 @@ export default function PersistentMailboxPanel({
     }
   };
 
+  const handleDeleteAll = async () => {
+    if (!mailboxId) {
+      return;
+    }
+
+    try {
+      await deleteAllMailboxMessages(mailboxId);
+      await syncMessages(mailboxId);
+    } catch (error) {
+      console.error(error);
+      setErrorText(error instanceof Error ? error.message : '刪除全部郵件失敗。');
+    }
+  };
+
   const normalizedRequestedMailboxId = normalizeMailboxId(requestedMailboxId);
   const isOpeningRequested = busyAction === 'open' && busyMailboxTarget === normalizedRequestedMailboxId;
   const isDeletingCurrent = busyAction === 'delete' && busyMailboxTarget === mailboxId;
@@ -403,8 +451,6 @@ export default function PersistentMailboxPanel({
     }
   };
 
-  const registrationProfileScope = activeTagNavbar === 'all' ? 'general' : `tag:${activeTagNavbar}`;
-
   return (
     <section className="mail-card">
       <div className="mail-card__header">
@@ -417,13 +463,38 @@ export default function PersistentMailboxPanel({
       <div className="mail-insights two-col">
         <article className="insight-card insight-card--accent">
           <span>目前已載入信箱</span>
-          <strong>{emailAddress || '尚未載入任何保留信箱'}</strong>
-          <p className="muted insight-card__hint">目前查看、收信與清理的都是這個信箱。</p>
+          <strong
+            onClick={() => emailAddress && void handleCopy()}
+            style={{ cursor: emailAddress ? 'pointer' : 'default' }}
+            title={emailAddress ? '點擊即複製' : ''}
+          >
+            {emailAddress || '尚未載入任何保留信箱'}
+          </strong>
+          {mailboxId && savedMailboxMap.get(mailboxId)?.tag === 'github' && onJumpToGitHubAccount ? (
+            <button
+              type="button"
+              className="secondary small"
+              onClick={() => onJumpToGitHubAccount(mailboxId)}
+              style={{ marginTop: '0.8rem', alignSelf: 'flex-start' }}
+            >
+              帳號管理
+            </button>
+          ) : null}
+          <p className="muted insight-card__hint">
+            目前查看、收信與清理的都是這個信箱。
+            {emailAddress && (
+              <>
+                <br />
+                ✓ 點擊即複製{copied && ' (已複製)'}
+              </>
+            )}
+          </p>
         </article>
-        <article className="insight-card">
-          <span>已保存名稱</span>
-          <strong>{savedMailboxes.length} 個</strong>
-          <p className="muted insight-card__hint">標籤數：{availableTags.length} 種</p>
+        <article className="insight-card" style={{ fontSize: '0.75rem', padding: '0.8rem' }}>
+          <span>已保存統計</span>
+          <p style={{ margin: '4px 0', fontSize: '0.9rem', fontWeight: '600' }}>
+            {savedMailboxes.length} 個 • {availableTags.length} 標籤
+          </p>
         </article>
       </div>
 
@@ -445,30 +516,42 @@ export default function PersistentMailboxPanel({
 
       <div className="saved-mailboxes">
         <div className="message-section__header">
-          <h3>{activeTagNavbar === 'all' ? '保留電子郵件清單' : `${activeTagNavbar} 清單`}</h3>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <button 
+              type="button" 
+              className="secondary small collapse-toggle"
+              onClick={() => setSavedListCollapsed(!savedListCollapsed)}
+              title={savedListCollapsed ? '展開' : '收合'}
+            >
+              <span aria-hidden="true">{savedListCollapsed ? '▶' : '▼'}</span>
+            </button>
+            <h3>{activeTagNavbar === 'all' ? '保留電子郵件清單' : `${activeTagNavbar} 清單`}</h3>
+          </div>
           <span>{visibleSavedMailboxes.length} / {savedMailboxes.length} 個</span>
         </div>
 
-        <div className="saved-list-toolbar">
-          <label>
-            <span className="field-label">排序</span>
-            <select
-              value={savedListSort}
-              onChange={(event) => setSavedListSort(event.target.value as SavedListSort)}
-            >
-              <option value="recent">最近載入</option>
-              <option value="name">名稱 A-Z</option>
-              <option value="tag">標籤 A-Z</option>
-            </select>
-          </label>
-        </div>
+        {!savedListCollapsed && (
+          <>
+            <div className="saved-list-toolbar">
+              <label>
+                <span className="field-label">排序</span>
+                <select
+                  value={savedListSort}
+                  onChange={(event) => setSavedListSort(event.target.value as SavedListSort)}
+                >
+                  <option value="recent">最近載入</option>
+                  <option value="name">名稱 A-Z</option>
+                  <option value="tag">標籤 A-Z</option>
+                </select>
+              </label>
+            </div>
 
-        {savedMailboxes.length === 0 ? (
-          <div className="empty-state">目前還沒有保存任何保留信箱。</div>
-        ) : visibleSavedMailboxes.length === 0 ? (
-          <div className="empty-state">目前篩選條件下沒有信箱。</div>
-        ) : (
-          <div className="saved-list">
+            {savedMailboxes.length === 0 ? (
+              <div className="empty-state">目前還沒有保存任何保留信箱。</div>
+            ) : visibleSavedMailboxes.length === 0 ? (
+              <div className="empty-state">目前篩選條件下沒有信箱。</div>
+            ) : (
+              <div className="saved-list">
             {visibleSavedMailboxes.map((savedMailbox) => {
               const isLoadingSaved = busyAction === 'open' && busyMailboxTarget === savedMailbox.mailboxId;
               const isDeletingSaved = busyAction === 'delete' && busyMailboxTarget === savedMailbox.mailboxId;
@@ -535,7 +618,9 @@ export default function PersistentMailboxPanel({
                 </div>
               );
             })}
-          </div>
+              </div>
+            )}
+          </>
         )}
       </div>
 
@@ -561,9 +646,6 @@ export default function PersistentMailboxPanel({
               <span>{isOpeningRequested ? '載入中...' : '建立 / 載入'}</span>
             </span>
           </button>
-          <button type="button" className="secondary" onClick={handleCopy} disabled={!emailAddress}>
-            {copied ? '已複製' : '複製目前信箱'}
-          </button>
           <button
             type="button"
             className="secondary"
@@ -586,20 +668,6 @@ export default function PersistentMailboxPanel({
           </button>
         </div>
       </div>
-
-      <RegistrationHelperPanel
-        profileScope={registrationProfileScope}
-        persistDraft
-        defaultCollapsed
-        maskPassword
-        draftOverride={promotionDraftOverride}
-        draftOverrideKey={promotionDraftKey}
-        onApplyName={(value) => {
-          setRequestedMailboxId(value);
-          setErrorText('');
-        }}
-        onApplyTag={(value) => setRequestedTag(normalizeMailboxTag(value))}
-      />
 
       {promotionMailboxId ? (
         <div className="modal-backdrop" role="presentation">
@@ -667,7 +735,11 @@ export default function PersistentMailboxPanel({
         messages={messages}
         onMarkRead={handleMarkRead}
         onCleanup={handleCleanup}
+        onDeleteAll={handleDeleteAll}
         cleanupLabel="清理已讀郵件"
+        deleteAllLabel="刪除全部郵件"
+        defaultCollapsed={true}
+        onCollapsedChange={setMessagesCollapsed}
       />
     </section>
   );
