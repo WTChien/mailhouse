@@ -109,7 +109,7 @@ export default function TempMail() {
               requestId: `${mailboxId}-${Date.now()}`,
             });
             setGitHubFocusRequest({ mailboxId, requestId: `${mailboxId}-${Date.now()}` });
-            setActiveTab('github');
+            setActiveTab('persistent');
           }}
         />
       </div>

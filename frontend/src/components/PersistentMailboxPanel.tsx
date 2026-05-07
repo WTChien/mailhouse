@@ -35,6 +35,7 @@ type PersistentMailboxPanelProps = {
   focusMailboxId?: string | null;
   focusRequestId?: string;
   onSavedMailboxesChange?: (mailboxes: SavedMailboxItem[]) => void;
+  onPromotionComplete?: (mailboxId: string) => void;
 };
 
 export default function PersistentMailboxPanel({
@@ -65,6 +66,8 @@ export default function PersistentMailboxPanel({
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [messagesCollapsed, setMessagesCollapsed] = useState(true);
   const [savedListCollapsed, setSavedListCollapsed] = useState(true);
+  const [untaggedMailboxForPreservation, setUntaggedMailboxForPreservation] = useState('');
+  const [untaggedPreservationTagDraft, setUntaggedPreservationTagDraft] = useState('');
   const handledPromotionRequestIdRef = useRef('');
   const handledFocusRequestIdRef = useRef('');
   const cloudLoadedRef = useRef(false);
@@ -476,15 +479,24 @@ export default function PersistentMailboxPanel({
           >
             {emailAddress || '尚未載入任何保留信箱'}
           </strong>
-          {mailboxId && savedMailboxMap.get(mailboxId)?.tag === 'github' && onJumpToGitHubAccount ? (
-            <button
-              type="button"
-              className="secondary small"
-              onClick={() => onJumpToGitHubAccount(mailboxId)}
-              style={{ marginTop: '0.8rem', alignSelf: 'flex-start' }}
-            >
-              帳號管理
-            </button>
+          {mailboxId ? (
+            <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.8rem', alignItems: 'flex-start', flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                className="secondary small"
+                onClick={() => onJumpToGitHubAccount?.(mailboxId)}
+              >
+                帳號管理
+              </button>
+              <button
+                type="button"
+                className="danger small"
+                onClick={() => void handleDeleteMailbox()}
+                disabled={isBusy}
+              >
+                {busyAction === 'delete' ? '刪除中...' : '刪除信箱'}
+              </button>
+            </div>
           ) : null}
           <p className="muted insight-card__hint">
             目前查看、收信與清理的都是這個信箱。
@@ -563,6 +575,7 @@ export default function PersistentMailboxPanel({
               const isDeletingSaved = busyAction === 'delete' && busyMailboxTarget === savedMailbox.mailboxId;
               const normalizedSavedTag = normalizeMailboxTag(savedMailbox.tag);
               const canJumpToGitHub = normalizedSavedTag === 'github';
+              const hasNoTag = !savedMailbox.tag || normalizedSavedTag === '';
 
               return (
                 <div className="saved-chip" key={savedMailbox.mailboxId}>
@@ -570,57 +583,86 @@ export default function PersistentMailboxPanel({
                     <strong>{savedMailbox.mailboxId}@{MAIL_DOMAIN}</strong>
                     {savedMailbox.tag ? <span className="tag-pill">{savedMailbox.tag}</span> : <span className="muted">未設定標籤</span>}
                   </div>
-                  <div className="saved-chip__tag-editor">
-                    <input
-                      type="text"
-                      className="tag-input"
-                      value={tagDraftByMailbox[savedMailbox.mailboxId] ?? savedMailbox.tag}
-                      placeholder="設定用途標籤"
-                      onChange={(event) => {
-                        const value = normalizeMailboxTag(event.target.value);
-                        setTagDraftByMailbox((prev) => ({ ...prev, [savedMailbox.mailboxId]: value }));
-                      }}
-                      onBlur={() => applyTagDraft(savedMailbox.mailboxId)}
-                      onKeyDown={(event) => {
-                        if (event.key === 'Enter') {
-                          applyTagDraft(savedMailbox.mailboxId);
-                        }
-                      }}
-                    />
-                  </div>
-                  <div className="saved-chip__actions">
-                    {canJumpToGitHub ? (
+                  {hasNoTag ? (
+                    <div className="saved-chip__actions">
                       <button
                         type="button"
                         className="secondary small"
-                        onClick={() => onJumpToGitHubAccount?.(savedMailbox.mailboxId)}
+                        onClick={() => {
+                          setUntaggedMailboxForPreservation(savedMailbox.mailboxId);
+                          setUntaggedPreservationTagDraft('');
+                        }}
+                        disabled={isBusy}
                       >
-                        GitHub管理
+                        保留
                       </button>
-                    ) : null}
-                    <button
-                      type="button"
-                      className="secondary small"
-                      onClick={() => void openPersistentMailbox(savedMailbox.mailboxId, savedMailbox.tag)}
-                      disabled={isBusy}
-                    >
-                      <span className="button-content">
-                        {isLoadingSaved ? <span className="button-spinner" aria-hidden="true" /> : null}
-                        <span>{isLoadingSaved ? '載入中...' : '載入'}</span>
-                      </span>
-                    </button>
-                    <button
-                      type="button"
-                      className="danger small"
-                      onClick={() => void handleDeleteMailbox(savedMailbox.mailboxId)}
-                      disabled={isBusy}
-                    >
-                      <span className="button-content">
-                        {isDeletingSaved ? <span className="button-spinner" aria-hidden="true" /> : null}
-                        <span>{isDeletingSaved ? '刪除中...' : '刪除'}</span>
-                      </span>
-                    </button>
-                  </div>
+                      <button
+                        type="button"
+                        className="danger small"
+                        onClick={() => void handleDeleteMailbox(savedMailbox.mailboxId)}
+                        disabled={isBusy}
+                      >
+                        <span className="button-content">
+                          {isDeletingSaved ? <span className="button-spinner" aria-hidden="true" /> : null}
+                          <span>{isDeletingSaved ? '刪除中...' : '刪除'}</span>
+                        </span>
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="saved-chip__tag-editor">
+                      <input
+                        type="text"
+                        className="tag-input"
+                        value={tagDraftByMailbox[savedMailbox.mailboxId] ?? savedMailbox.tag}
+                        placeholder="設定用途標籤"
+                        onChange={(event) => {
+                          const value = normalizeMailboxTag(event.target.value);
+                          setTagDraftByMailbox((prev) => ({ ...prev, [savedMailbox.mailboxId]: value }));
+                        }}
+                        onBlur={() => applyTagDraft(savedMailbox.mailboxId)}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter') {
+                            applyTagDraft(savedMailbox.mailboxId);
+                          }
+                        }}
+                      />
+                    </div>
+                  )}
+                  {!hasNoTag && (
+                    <div className="saved-chip__actions">
+                      {canJumpToGitHub ? (
+                        <button
+                          type="button"
+                          className="secondary small"
+                          onClick={() => onJumpToGitHubAccount?.(savedMailbox.mailboxId)}
+                        >
+                          GitHub管理
+                        </button>
+                      ) : null}
+                      <button
+                        type="button"
+                        className="secondary small"
+                        onClick={() => void openPersistentMailbox(savedMailbox.mailboxId, savedMailbox.tag)}
+                        disabled={isBusy}
+                      >
+                        <span className="button-content">
+                          {isLoadingSaved ? <span className="button-spinner" aria-hidden="true" /> : null}
+                          <span>{isLoadingSaved ? '載入中...' : '載入'}</span>
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        className="danger small"
+                        onClick={() => void handleDeleteMailbox(savedMailbox.mailboxId)}
+                        disabled={isBusy}
+                      >
+                        <span className="button-content">
+                          {isDeletingSaved ? <span className="button-spinner" aria-hidden="true" /> : null}
+                          <span>{isDeletingSaved ? '刪除中...' : '刪除'}</span>
+                        </span>
+                      </button>
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -682,6 +724,74 @@ export default function PersistentMailboxPanel({
                 onClick={() => {
                   setPromotionMailboxId('');
                   setPromotionTagDraft('');
+                }}
+                disabled={isBusy}
+              >
+                稍後再說
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {untaggedMailboxForPreservation ? (
+        <div className="modal-backdrop" role="presentation">
+          <div className="modal-card" role="dialog" aria-modal="true" aria-labelledby="untagged-preservation-title">
+            <div className="message-section__header">
+              <h3 id="untagged-preservation-title">設定標籤</h3>
+              <span>{untaggedMailboxForPreservation}@{MAIL_DOMAIN}</span>
+            </div>
+
+            <p className="muted modal-copy">請為這個無標籤的信箱設定標籤，或稍後再設定。</p>
+
+            {availableTags.length > 0 ? (
+              <div className="modal-tag-list" role="list" aria-label="既有標籤">
+                {availableTags.map((tag) => (
+                  <button
+                    key={tag}
+                    type="button"
+                    className={`secondary small tag-choice ${normalizeMailboxTag(untaggedPreservationTagDraft) === tag ? 'active' : ''}`}
+                    onClick={() => setUntaggedPreservationTagDraft(tag)}
+                  >
+                    {tag}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+
+            <div className="input-row modal-actions-row">
+              <input
+                type="text"
+                value={untaggedPreservationTagDraft}
+                placeholder="輸入新標籤，例如 nintendo / 小米 / 社群"
+                onChange={(event) => setUntaggedPreservationTagDraft(normalizeMailboxTag(event.target.value))}
+              />
+            </div>
+
+            <div className="modal-actions-row">
+              <button 
+                type="button" 
+                onClick={() => {
+                  const nextTag = normalizeMailboxTag(untaggedPreservationTagDraft);
+                  const mailboxId = untaggedMailboxForPreservation;
+                  setSavedMailboxes((prev) => prev.map((item) => (item.mailboxId === mailboxId ? { ...item, tag: nextTag } : item)));
+                  setUntaggedMailboxForPreservation('');
+                  setUntaggedPreservationTagDraft('');
+                  onJumpToGitHubAccount?.(mailboxId);
+                }} 
+                disabled={isBusy}
+              >
+                <span className="button-content">
+                  {isBusy ? <span className="button-spinner" aria-hidden="true" /> : null}
+                  <span>{isBusy ? '設定中...' : '確認'}</span>
+                </span>
+              </button>
+              <button
+                type="button"
+                className="secondary"
+                onClick={() => {
+                  setUntaggedMailboxForPreservation('');
+                  setUntaggedPreservationTagDraft('');
                 }}
                 disabled={isBusy}
               >
