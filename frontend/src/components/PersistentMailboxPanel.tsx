@@ -12,16 +12,82 @@ import {
 } from '../lib/api';
 import MailMessageTable from './MailMessageTable';
 import {
+  createDefaultTagFieldConfig,
+  TAG_FIELD_KEYS,
   normalizeMailboxId,
   normalizeMailboxTag,
+  normalizeTagFieldValues,
+  readSavedMailboxes,
   readSavedListCollapsed,
+  readTagFieldConfigs,
+  writeSavedMailboxes,
   writeSavedListCollapsed,
+  writeTagFieldConfigs,
   type MailMessage,
   type SavedMailboxItem,
+  type TagFieldConfig,
+  type TagFieldConfigMap,
+  type TagFieldKey,
+  type TagFieldValues,
 } from './mailboxUtils';
 
 type BusyAction = 'open' | 'delete' | null;
 type SavedListSort = 'recent' | 'name' | 'tag';
+
+function mergeSavedMailboxLists(localItems: SavedMailboxItem[], cloudItems: SavedMailboxItem[]) {
+  const merged = new Map<string, SavedMailboxItem>();
+
+  const mergeOne = (item: SavedMailboxItem) => {
+    const existing = merged.get(item.mailboxId);
+    if (!existing) {
+      merged.set(item.mailboxId, item);
+      return;
+    }
+
+    const createdAt = new Date(existing.createdAt).getTime() <= new Date(item.createdAt).getTime()
+      ? existing.createdAt
+      : item.createdAt;
+    const lastUsedAt = new Date(existing.lastUsedAt).getTime() >= new Date(item.lastUsedAt).getTime()
+      ? existing.lastUsedAt
+      : item.lastUsedAt;
+
+    merged.set(item.mailboxId, {
+      mailboxId: item.mailboxId,
+      tag: item.tag || existing.tag,
+      createdAt,
+      lastUsedAt,
+      fieldValues: {
+        ...(existing.fieldValues ?? {}),
+        ...(item.fieldValues ?? {}),
+      },
+    });
+  };
+
+  localItems.forEach(mergeOne);
+  cloudItems.forEach(mergeOne);
+  return Array.from(merged.values());
+}
+
+function mergeTagFieldConfigs(
+  localConfigs: TagFieldConfigMap,
+  cloudConfigs: TagFieldConfigMap,
+) {
+  const merged = { ...localConfigs };
+
+  Object.entries(cloudConfigs).forEach(([tag, cloudConfig]) => {
+    const localConfig = merged[tag];
+    if (!localConfig) {
+      merged[tag] = cloudConfig;
+      return;
+    }
+
+    const localUpdatedAt = new Date(localConfig.updatedAt).getTime();
+    const cloudUpdatedAt = new Date(cloudConfig.updatedAt).getTime();
+    merged[tag] = cloudUpdatedAt >= localUpdatedAt ? cloudConfig : localConfig;
+  });
+
+  return merged;
+}
 
 export type PersistentPromotionRequest = {
   mailboxId: string;
@@ -31,7 +97,8 @@ export type PersistentPromotionRequest = {
 type PersistentMailboxPanelProps = {
   isActive?: boolean;
   requestedPromotion?: PersistentPromotionRequest | null;
-  onJumpToGitHubAccount?: (mailboxId: string) => void;
+  activeTagNavbar?: string;
+  onActiveTagNavbarChange?: (tag: string) => void;
   focusMailboxId?: string | null;
   focusRequestId?: string;
   onSavedMailboxesChange?: (mailboxes: SavedMailboxItem[]) => void;
@@ -41,7 +108,8 @@ type PersistentMailboxPanelProps = {
 export default function PersistentMailboxPanel({
   isActive = true,
   requestedPromotion = null,
-  onJumpToGitHubAccount,
+  activeTagNavbar: activeTagNavbarProp,
+  onActiveTagNavbarChange,
   focusMailboxId = null,
   focusRequestId = '',
   onSavedMailboxesChange,
@@ -56,14 +124,16 @@ export default function PersistentMailboxPanel({
   const [busyAction, setBusyAction] = useState<BusyAction>(null);
   const [busyMailboxTarget, setBusyMailboxTarget] = useState('');
   const [savedMailboxes, setSavedMailboxes] = useState<SavedMailboxItem[]>([]);
-  const [activeTagNavbar, setActiveTagNavbar] = useState('all');
+  const [tagFieldConfigs, setTagFieldConfigs] = useState<TagFieldConfigMap>({});
+  const [isTagFieldEditing, setIsTagFieldEditing] = useState(false);
+  const [tagFieldDraft, setTagFieldDraft] = useState<TagFieldValues>({});
   const [savedListSort, setSavedListSort] = useState<SavedListSort>('recent');
   const [tagDraftByMailbox, setTagDraftByMailbox] = useState<Record<string, string>>({});
+  const [tagConfigModalTag, setTagConfigModalTag] = useState('');
+  const [tagConfigDraft, setTagConfigDraft] = useState<TagFieldConfig>(createDefaultTagFieldConfig());
   const [promotionMailboxId, setPromotionMailboxId] = useState('');
   const [promotionTagDraft, setPromotionTagDraft] = useState('');
   const [lastSyncedMailboxes, setLastSyncedMailboxes] = useState<string>('');
-  const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(false);
-  const [isRefreshing, setIsRefreshing] = useState(false);
   const [messagesCollapsed, setMessagesCollapsed] = useState(true);
   const [savedListCollapsed, setSavedListCollapsed] = useState(true);
   const [untaggedMailboxForPreservation, setUntaggedMailboxForPreservation] = useState('');
@@ -71,9 +141,11 @@ export default function PersistentMailboxPanel({
   const handledPromotionRequestIdRef = useRef('');
   const handledFocusRequestIdRef = useRef('');
   const cloudLoadedRef = useRef(false);
+  const messagePollInFlightRef = useRef(false);
 
   const emailAddress = useMemo(() => (mailboxId ? `${mailboxId}@${MAIL_DOMAIN}` : ''), [mailboxId]);
   const isBusy = busyAction !== null;
+  const activeTagNavbar = activeTagNavbarProp ?? 'all';
 
   useEffect(() => {
     writeSavedListCollapsed(savedListCollapsed);
@@ -88,15 +160,35 @@ export default function PersistentMailboxPanel({
     let disposed = false;
 
     const loadCloudSavedMailboxes = async () => {
+      const localSavedMailboxes = readSavedMailboxes();
+      const localTagConfigs = readTagFieldConfigs();
+
+      if (!disposed) {
+        // Bootstrap UI with local cache first to avoid empty state during cloud sync delay.
+        setSavedMailboxes(localSavedMailboxes);
+        setTagFieldConfigs(localTagConfigs);
+      }
+
       try {
         const cloudData = await getClientSyncState();
         if (!disposed) {
+          const cloudSavedMailboxes = cloudData.savedMailboxes ?? [];
+          const cloudTagConfigs = cloudData.tagFieldConfigs ?? {};
+          const mergedSavedMailboxes = mergeSavedMailboxLists(localSavedMailboxes, cloudSavedMailboxes);
+          const mergedTagConfigs = mergeTagFieldConfigs(localTagConfigs, cloudTagConfigs);
+
           cloudLoadedRef.current = true;
-          setSavedMailboxes(cloudData.savedMailboxes ?? []);
-          setLastSyncedMailboxes(JSON.stringify(cloudData.savedMailboxes ?? []));
+          setSavedMailboxes(mergedSavedMailboxes);
+          setTagFieldConfigs(mergedTagConfigs);
+          // Keep baseline as cloud payload so unsynced local differences are uploaded afterward.
+          setLastSyncedMailboxes(JSON.stringify(cloudSavedMailboxes));
         }
       } catch (error) {
         console.error('Failed to load saved mailboxes from cloud:', error);
+        if (!disposed) {
+          cloudLoadedRef.current = true;
+          setLastSyncedMailboxes('');
+        }
       }
     };
 
@@ -120,13 +212,28 @@ export default function PersistentMailboxPanel({
   }, [savedMailboxes, onSavedMailboxesChange]);
 
   const syncMessages = async (targetMailboxId: string) => {
+    if (messagePollInFlightRef.current) {
+      return;
+    }
+
+    messagePollInFlightRef.current = true;
     try {
       const data = await getMailboxMessages(targetMailboxId);
       setMessages(data.messages ?? []);
     } catch (error) {
       console.error(error);
       setErrorText(error instanceof Error ? error.message : '載入信件失敗，請稍後再試。');
+    } finally {
+      messagePollInFlightRef.current = false;
     }
+  };
+
+  const getNextPollMs = () => {
+    if (typeof document !== 'undefined' && document.visibilityState !== 'visible') {
+      return 30000;
+    }
+
+    return messagesCollapsed ? 10000 : 4000;
   };
 
   const openPersistentMailbox = async (inputValue?: string, tagValue?: string) => {
@@ -154,6 +261,10 @@ export default function PersistentMailboxPanel({
           tag: resolvedTag,
           createdAt: existing?.createdAt ?? nowIso,
           lastUsedAt: nowIso,
+          fieldValues: {
+            ...(existing?.fieldValues ?? {}),
+            email: `${data.mailboxId}@${MAIL_DOMAIN}`,
+          },
         };
 
         return [nextItem, ...prev.filter((item) => item.mailboxId !== data.mailboxId)];
@@ -224,6 +335,10 @@ export default function PersistentMailboxPanel({
   };
 
   useEffect(() => {
+    writeSavedMailboxes(savedMailboxes);
+  }, [savedMailboxes]);
+
+  useEffect(() => {
     if (!cloudLoadedRef.current) {
       return;
     }
@@ -243,6 +358,22 @@ export default function PersistentMailboxPanel({
 
     return () => window.clearTimeout(timerId);
   }, [savedMailboxes, lastSyncedMailboxes]);
+
+  useEffect(() => {
+    if (!cloudLoadedRef.current) {
+      return;
+    }
+
+    writeTagFieldConfigs(tagFieldConfigs);
+    const timerId = window.setTimeout(() => {
+      void updateClientSyncState({ tagFieldConfigs }).then(() => {
+      }).catch((error) => {
+        console.error('Failed to sync tag field configs:', error);
+      });
+    }, 900);
+
+    return () => window.clearTimeout(timerId);
+  }, [tagFieldConfigs]);
 
   useEffect(() => {
     setTagDraftByMailbox((prev) => {
@@ -270,13 +401,101 @@ export default function PersistentMailboxPanel({
       && activeTagNavbar !== normalizeMailboxTag(requestedTag)
       && !availableTags.includes(activeTagNavbar)
     ) {
-      setActiveTagNavbar('all');
+      onActiveTagNavbarChange?.('all');
     }
-  }, [activeTagNavbar, availableTags, requestedTag]);
+  }, [activeTagNavbar, availableTags, onActiveTagNavbarChange, requestedTag]);
 
   const savedMailboxMap = useMemo(() => {
     return new Map(savedMailboxes.map((item) => [item.mailboxId, item]));
   }, [savedMailboxes]);
+
+  const activeTag = activeTagNavbar === 'all' ? normalizeMailboxTag(requestedTag) : activeTagNavbar;
+  const activeTagConfig = activeTag ? (tagFieldConfigs[activeTag] ?? createDefaultTagFieldConfig()) : createDefaultTagFieldConfig();
+  const activeTagMailbox = useMemo(() => {
+    if (!activeTag) {
+      return null;
+    }
+
+    return savedMailboxes.find((item) => normalizeMailboxTag(item.tag) === activeTag) ?? null;
+  }, [activeTag, savedMailboxes]);
+
+  const activeTagMailboxFieldValues = normalizeTagFieldValues(activeTagMailbox?.fieldValues ?? {});
+
+  const isTagFieldEnabled = (field: TagFieldKey) => activeTagConfig.selectedFields.includes(field as Exclude<TagFieldKey, 'email'>);
+
+  const updateTagFieldDraft = (fieldKey: TagFieldKey, fieldValue: string) => {
+    const nextValue = fieldKey === 'email' ? fieldValue.trim() : fieldValue;
+    setTagFieldDraft((prev) => ({
+      ...prev,
+      [fieldKey]: nextValue,
+    }));
+  };
+
+  const startTagFieldEdit = () => {
+    setIsTagFieldEditing(true);
+  };
+
+  const cancelTagFieldEdit = () => {
+    setTagFieldDraft(activeTagMailboxFieldValues);
+    setIsTagFieldEditing(false);
+  };
+
+  const saveTagFieldEdit = () => {
+    if (!activeTagMailbox) {
+      return;
+    }
+
+    setSavedMailboxes((prev) => prev.map((item) => {
+      if (item.mailboxId !== activeTagMailbox.mailboxId) {
+        return item;
+      }
+
+      return {
+        ...item,
+        fieldValues: {
+          ...(item.fieldValues ?? {}),
+          ...normalizeTagFieldValues(tagFieldDraft),
+          email: `${item.mailboxId}@${MAIL_DOMAIN}`,
+        },
+      };
+    }));
+
+    setIsTagFieldEditing(false);
+  };
+
+  useEffect(() => {
+    setTagFieldDraft(activeTagMailboxFieldValues);
+    setIsTagFieldEditing(false);
+  }, [activeTagMailbox?.mailboxId, activeTagMailboxFieldValues.account, activeTagMailboxFieldValues.name, activeTagMailboxFieldValues.notes, activeTagMailboxFieldValues.password]);
+
+  const openTagConfigModal = (tag: string) => {
+    const normalizedTag = normalizeMailboxTag(tag);
+    if (!normalizedTag) {
+      return;
+    }
+
+    setTagConfigModalTag(normalizedTag);
+    setTagConfigDraft(tagFieldConfigs[normalizedTag] ?? createDefaultTagFieldConfig());
+  };
+
+  const saveTagConfigDraft = () => {
+    const normalizedTag = normalizeMailboxTag(tagConfigModalTag);
+    if (!normalizedTag) {
+      return;
+    }
+
+    const nextConfig = {
+      ...tagConfigDraft,
+      selectedFields: Array.from(new Set(tagConfigDraft.selectedFields)),
+      updatedAt: new Date().toISOString(),
+    } satisfies TagFieldConfig;
+
+    setTagFieldConfigs((prev) => ({
+      ...prev,
+      [normalizedTag]: nextConfig,
+    }));
+    setTagConfigModalTag('');
+  };
 
   useEffect(() => {
     if (!requestedPromotion?.requestId || handledPromotionRequestIdRef.current === requestedPromotion.requestId) {
@@ -293,12 +512,12 @@ export default function PersistentMailboxPanel({
     setRequestedMailboxId(targetMailboxId);
     const currentTag = savedMailboxMap.get(targetMailboxId)?.tag ?? '';
     setRequestedTag(currentTag);
-    setActiveTagNavbar(currentTag || 'all');
+    onActiveTagNavbarChange?.(currentTag || 'all');
     setPromotionMailboxId(targetMailboxId);
     setPromotionTagDraft(currentTag);
     setStatusText('已移至保留信箱，請確認是否套用標籤');
     setErrorText('');
-  }, [requestedPromotion, savedMailboxMap]);
+  }, [onActiveTagNavbarChange, requestedPromotion, savedMailboxMap]);
 
   useEffect(() => {
     if (!focusMailboxId || !focusRequestId || handledFocusRequestIdRef.current === focusRequestId) {
@@ -338,33 +557,53 @@ export default function PersistentMailboxPanel({
   }, [fallbackMailboxId, mailboxId, promotionMailboxId, savedMailboxMap]);
 
   useEffect(() => {
+    if (activeTagNavbar !== 'all') {
+      const targetMailbox = savedMailboxes.find((item) => normalizeMailboxTag(item.tag) === activeTagNavbar);
+      if (targetMailbox && targetMailbox.mailboxId !== mailboxId) {
+        void openPersistentMailbox(targetMailbox.mailboxId, targetMailbox.tag);
+      }
+    }
+  }, [activeTagNavbar, mailboxId, savedMailboxes]);
+
+  useEffect(() => {
     if (!isActive || !mailboxId) {
       return;
     }
 
-    // Sync messages immediately when tab becomes active (solves issue where new emails don't appear)
-    void syncMessages(mailboxId);
+    let disposed = false;
+    let timerId = 0;
 
-    if (!autoRefreshEnabled) {
-      return;
-    }
+    const poll = async () => {
+      await syncMessages(mailboxId);
+      if (disposed) {
+        return;
+      }
 
-    const timer = window.setInterval(() => {
-      void syncMessages(mailboxId);
-    }, 4000);
+      timerId = window.setTimeout(() => {
+        void poll();
+      }, getNextPollMs());
+    };
 
-    return () => window.clearInterval(timer);
-  }, [autoRefreshEnabled, isActive, mailboxId]);
+    const wakeAndSyncNow = () => {
+      if (disposed) {
+        return;
+      }
 
-  const handleRefreshNow = async () => {
-    if (!mailboxId || isRefreshing) {
-      return;
-    }
+      window.clearTimeout(timerId);
+      void poll();
+    };
 
-    setIsRefreshing(true);
-    await syncMessages(mailboxId);
-    setIsRefreshing(false);
-  };
+    void poll();
+    window.addEventListener('focus', wakeAndSyncNow);
+    document.addEventListener('visibilitychange', wakeAndSyncNow);
+
+    return () => {
+      disposed = true;
+      window.clearTimeout(timerId);
+      window.removeEventListener('focus', wakeAndSyncNow);
+      document.removeEventListener('visibilitychange', wakeAndSyncNow);
+    };
+  }, [isActive, mailboxId, messagesCollapsed]);
 
   const handleMarkRead = async (messageId: string, isRead: boolean) => {
     if (!mailboxId) {
@@ -443,6 +682,14 @@ export default function PersistentMailboxPanel({
     if (targetMailboxId === mailboxId) {
       setRequestedTag(nextTag);
     }
+
+    if (nextTag && !tagFieldConfigs[nextTag]) {
+      setTagFieldConfigs((prev) => ({
+        ...prev,
+        [nextTag]: createDefaultTagFieldConfig(),
+      }));
+      openTagConfigModal(nextTag);
+    }
   };
 
   const applyTagDraft = (targetMailboxId: string) => {
@@ -456,15 +703,33 @@ export default function PersistentMailboxPanel({
 
     const nextTag = normalizeMailboxTag(tagValue);
     setRequestedTag(nextTag);
-    setActiveTagNavbar(nextTag || 'all');
+    onActiveTagNavbarChange?.(nextTag || 'all');
     const didOpen = await openPersistentMailbox(promotionMailboxId, nextTag);
 
     if (didOpen) {
       setPromotionMailboxId('');
       setPromotionTagDraft(nextTag);
       setStatusText(nextTag ? `已移至保留信箱，標籤：${nextTag}` : '已移至保留信箱');
+      if (nextTag && !tagFieldConfigs[nextTag]) {
+        setTagFieldConfigs((prev) => ({
+          ...prev,
+          [nextTag]: createDefaultTagFieldConfig(),
+        }));
+        openTagConfigModal(nextTag);
+      }
     }
   };
+
+  useEffect(() => {
+    if (activeTagNavbar === 'all') {
+      return;
+    }
+
+    const targetMailbox = savedMailboxes.find((item) => normalizeMailboxTag(item.tag) === activeTagNavbar);
+    if (targetMailbox && targetMailbox.mailboxId !== mailboxId) {
+      void openPersistentMailbox(targetMailbox.mailboxId, targetMailbox.tag);
+    }
+  }, [activeTagNavbar, mailboxId, savedMailboxes]);
 
   return (
     <section className="mail-card">
@@ -487,13 +752,6 @@ export default function PersistentMailboxPanel({
           </strong>
           {mailboxId ? (
             <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.8rem', alignItems: 'flex-start', flexWrap: 'wrap' }}>
-              <button
-                type="button"
-                className="secondary small"
-                onClick={() => onJumpToGitHubAccount?.(mailboxId)}
-              >
-                帳號管理
-              </button>
               <button
                 type="button"
                 className="danger small"
@@ -522,21 +780,103 @@ export default function PersistentMailboxPanel({
         </article>
       </div>
 
-      <div className="account-navbar" role="tablist" aria-label="帳號分類">
-        {navbarTabs.map((item) => (
-          <button
-            key={item}
-            type="button"
-            className={`account-tab ${activeTagNavbar === item ? 'active' : ''}`}
-            onClick={() => {
-              setActiveTagNavbar(item);
-              setRequestedTag(item === 'all' ? '' : item);
-            }}
-          >
-            {item === 'all' ? '全部帳號' : item}
-          </button>
-        ))}
-      </div>
+      {activeTagNavbar !== 'all' ? (
+        <section className="tag-config-panel">
+          <div className="message-section__header">
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+              <h3>{activeTagNavbar} 標籤管理頁面</h3>
+              <span className="tag-pill">欄位依標籤設定</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+              {isTagFieldEditing ? (
+                <>
+                  <button type="button" className="small" onClick={saveTagFieldEdit}>
+                    儲存編輯
+                  </button>
+                  <button type="button" className="secondary small" onClick={cancelTagFieldEdit}>
+                    取消
+                  </button>
+                </>
+              ) : (
+                <button type="button" className="secondary small" onClick={startTagFieldEdit}>
+                  編輯
+                </button>
+              )}
+              <button type="button" className="secondary small" onClick={() => openTagConfigModal(activeTagNavbar)}>
+                欄位設定
+              </button>
+            </div>
+          </div>
+          <p className="muted" style={{ marginTop: 0 }}>
+            Email 會自動帶入。欄位內容會先保留在編輯草稿，按下「儲存編輯」才會更新清單與雲端。
+          </p>
+
+          {activeTagMailbox ? (
+            <div className="tag-field-form">
+              <div className="tag-field-grid">
+                <label className="tag-field-item">
+                  <span className="field-label">信箱</span>
+                  <input type="text" value={emailAddress || `${activeTagMailbox.mailboxId}@${MAIL_DOMAIN}`} readOnly />
+                </label>
+
+                {isTagFieldEnabled('name') ? (
+                  <label className="tag-field-item">
+                    <span className="field-label">名稱</span>
+                    <input
+                      type="text"
+                      value={isTagFieldEditing ? (tagFieldDraft.name ?? '') : (activeTagMailboxFieldValues.name ?? '')}
+                      onChange={(event) => updateTagFieldDraft('name', event.target.value)}
+                      readOnly={!isTagFieldEditing}
+                      placeholder="輸入名稱"
+                    />
+                  </label>
+                ) : null}
+
+                {isTagFieldEnabled('account') ? (
+                  <label className="tag-field-item">
+                    <span className="field-label">帳號</span>
+                    <input
+                      type="text"
+                      value={isTagFieldEditing ? (tagFieldDraft.account ?? '') : (activeTagMailboxFieldValues.account ?? '')}
+                      onChange={(event) => updateTagFieldDraft('account', event.target.value)}
+                      readOnly={!isTagFieldEditing}
+                      placeholder="輸入帳號"
+                    />
+                  </label>
+                ) : null}
+
+                {isTagFieldEnabled('password') ? (
+                  <label className="tag-field-item">
+                    <span className="field-label">密碼</span>
+                    <input
+                      type="text"
+                      value={isTagFieldEditing ? (tagFieldDraft.password ?? '') : (activeTagMailboxFieldValues.password ?? '')}
+                      onChange={(event) => updateTagFieldDraft('password', event.target.value)}
+                      readOnly={!isTagFieldEditing}
+                      placeholder="輸入密碼"
+                    />
+                  </label>
+                ) : null}
+
+                {isTagFieldEnabled('notes') ? (
+                  <label className="tag-field-item tag-field-item--wide">
+                    <span className="field-label">備註</span>
+                    <input
+                      type="text"
+                      value={isTagFieldEditing ? (tagFieldDraft.notes ?? '') : (activeTagMailboxFieldValues.notes ?? '')}
+                      onChange={(event) => updateTagFieldDraft('notes', event.target.value)}
+                      readOnly={!isTagFieldEditing}
+                      placeholder="輸入備註"
+                    />
+                  </label>
+                ) : null}
+              </div>
+            </div>
+          ) : (
+            <div className="empty-state">這個標籤目前還沒有可編輯的信箱。</div>
+          )}
+        </section>
+      ) : null}
 
       <div className="saved-mailboxes">
         <div className="message-section__header">
@@ -580,13 +920,16 @@ export default function PersistentMailboxPanel({
               const isLoadingSaved = busyAction === 'open' && busyMailboxTarget === savedMailbox.mailboxId;
               const isDeletingSaved = busyAction === 'delete' && busyMailboxTarget === savedMailbox.mailboxId;
               const normalizedSavedTag = normalizeMailboxTag(savedMailbox.tag);
-              const canJumpToGitHub = normalizedSavedTag === 'github';
               const hasNoTag = !savedMailbox.tag || normalizedSavedTag === '';
+              const savedName = normalizeTagFieldValues(savedMailbox.fieldValues ?? {}).name ?? '';
 
               return (
                 <div className="saved-chip" key={savedMailbox.mailboxId}>
                   <div className="saved-chip__main">
-                    <strong>{savedMailbox.mailboxId}@{MAIL_DOMAIN}</strong>
+                    <strong>
+                      {savedMailbox.mailboxId}@{MAIL_DOMAIN}
+                      {savedName ? <span className="saved-chip__name"> • {savedName}</span> : null}
+                    </strong>
                     {savedMailbox.tag ? <span className="tag-pill">{savedMailbox.tag}</span> : <span className="muted">未設定標籤</span>}
                   </div>
                   {hasNoTag ? (
@@ -617,15 +960,6 @@ export default function PersistentMailboxPanel({
                   ) : (
                     <div className="saved-chip__tag-editor">
                       <input
-                        type="text"
-                        className="tag-input"
-                        value={tagDraftByMailbox[savedMailbox.mailboxId] ?? savedMailbox.tag}
-                        placeholder="設定用途標籤"
-                        onChange={(event) => {
-                          const value = normalizeMailboxTag(event.target.value);
-                          setTagDraftByMailbox((prev) => ({ ...prev, [savedMailbox.mailboxId]: value }));
-                        }}
-                        onBlur={() => applyTagDraft(savedMailbox.mailboxId)}
                         onKeyDown={(event) => {
                           if (event.key === 'Enter') {
                             applyTagDraft(savedMailbox.mailboxId);
@@ -636,15 +970,6 @@ export default function PersistentMailboxPanel({
                   )}
                   {!hasNoTag && (
                     <div className="saved-chip__actions">
-                      {canJumpToGitHub ? (
-                        <button
-                          type="button"
-                          className="secondary small"
-                          onClick={() => onJumpToGitHubAccount?.(savedMailbox.mailboxId)}
-                        >
-                          GitHub管理
-                        </button>
-                      ) : null}
                       <button
                         type="button"
                         className="secondary small"
@@ -783,7 +1108,6 @@ export default function PersistentMailboxPanel({
                   setSavedMailboxes((prev) => prev.map((item) => (item.mailboxId === mailboxId ? { ...item, tag: nextTag } : item)));
                   setUntaggedMailboxForPreservation('');
                   setUntaggedPreservationTagDraft('');
-                  onJumpToGitHubAccount?.(mailboxId);
                 }} 
                 disabled={isBusy}
               >
@@ -802,6 +1126,66 @@ export default function PersistentMailboxPanel({
                 disabled={isBusy}
               >
                 稍後再說
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {tagConfigModalTag ? (
+        <div className="modal-backdrop" role="presentation">
+          <div className="modal-card tag-config-modal" role="dialog" aria-modal="true" aria-labelledby="tag-config-title">
+            <div className="message-section__header">
+              <h3 id="tag-config-title">{tagConfigModalTag} 欄位設定</h3>
+              <span>設定這個標籤需要紀錄的資料</span>
+            </div>
+
+            <p className="muted modal-copy">信箱欄位會固定顯示，不需要另外勾選。其餘欄位可依標籤自由配置。</p>
+
+            <div className="tag-config-grid">
+              {TAG_FIELD_KEYS.map((field) => {
+                const checked = tagConfigDraft.selectedFields.includes(field);
+                const labelMap: Record<TagFieldKey, string> = {
+                  name: '名稱',
+                  account: '帳號',
+                  password: '密碼',
+                  notes: '備註',
+                  email: '信箱',
+                };
+
+                return (
+                  <label key={field} className={`tag-config-option ${checked ? 'active' : ''}`}>
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => {
+                        setTagConfigDraft((prev) => ({
+                          ...prev,
+                          selectedFields: prev.selectedFields.includes(field)
+                            ? prev.selectedFields.filter((item) => item !== field)
+                            : [...prev.selectedFields, field],
+                        }));
+                      }}
+                    />
+                    <span>
+                      <strong>{labelMap[field as TagFieldKey]}</strong>
+                      <small>勾選後會出現在此標籤頁</small>
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+
+            <p className="muted modal-copy" style={{ marginTop: 0 }}>
+              信箱欄位固定顯示，不需勾選。
+            </p>
+
+            <div className="modal-actions-row">
+              <button type="button" onClick={saveTagConfigDraft}>
+                儲存設定
+              </button>
+              <button type="button" className="secondary" onClick={() => setTagConfigModalTag('')}>
+                取消
               </button>
             </div>
           </div>

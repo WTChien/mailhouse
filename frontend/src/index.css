@@ -198,12 +198,24 @@ select:focus {
 
 .tabs-navbar {
   display: flex;
-  gap: 0.55rem;
+  flex-direction: column;
+  gap: 0.7rem;
   padding: 0.55rem;
   border-radius: 18px;
   background: #ffffff;
   border: 1px solid #e1e5e9;
   box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
+}
+
+.tabs-navbar__primary,
+.tabs-navbar__secondary {
+  display: flex;
+  gap: 0.55rem;
+  flex-wrap: wrap;
+}
+
+.tabs-navbar__secondary {
+  padding-left: 0.1rem;
 }
 
 .nav-tab {
@@ -384,6 +396,12 @@ select:focus {
   gap: 0.5rem;
 }
 
+.saved-chip__name {
+  font-size: 0.9em;
+  font-weight: 600;
+  color: #4b5563;
+}
+
 .tag-pill {
   display: inline-flex;
   align-items: center;
@@ -558,6 +576,80 @@ select:focus {
   align-items: center;
   gap: 0.55rem;
   flex-wrap: wrap;
+}
+
+.tag-config-panel {
+  padding: 1rem;
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(74, 144, 226, 0.08) 0%, rgba(255, 255, 255, 0.95) 100%);
+  border: 1px solid rgba(74, 144, 226, 0.18);
+  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.06);
+  margin-bottom: 1rem;
+}
+
+.tag-field-form {
+  margin-top: 0.9rem;
+}
+
+.tag-field-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.8rem;
+}
+
+.tag-field-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.tag-field-item input {
+  flex: 0 0 auto;
+  min-width: 0;
+  min-height: 42px;
+}
+
+.tag-field-item--wide {
+  grid-column: 1 / -1;
+}
+
+.tag-config-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.65rem;
+  margin-bottom: 1rem;
+}
+
+.tag-config-option {
+  display: flex;
+  gap: 0.75rem;
+  align-items: flex-start;
+  padding: 0.8rem 0.85rem;
+  border-radius: 14px;
+  border: 1px solid #d1d5db;
+  background: #f8f9fa;
+  color: #1f2937;
+}
+
+.tag-config-option.active {
+  border-color: rgba(74, 144, 226, 0.45);
+  background: rgba(74, 144, 226, 0.08);
+}
+
+.tag-config-option input {
+  width: auto;
+  min-width: auto;
+  flex: 0 0 auto;
+  margin-top: 0.2rem;
+}
+
+.tag-config-option strong,
+.tag-config-option small {
+  display: block;
+}
+
+.tag-config-option small {
+  color: #6b7280;
 }
 
 .generator-panel {

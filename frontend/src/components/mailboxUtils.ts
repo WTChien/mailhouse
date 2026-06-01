@@ -30,12 +30,27 @@ export const REGISTRATION_DRAFTS_KEY = 'mailhouse.registrationDrafts';
 export const REGISTRATION_RUNTIME_DRAFT_KEY = 'mailhouse.registrationRuntimeDraft';
 export const SAVED_LIST_COLLAPSED_KEY = 'mailhouse.savedListCollapsed';
 export const AUTO_REFRESH_ENABLED_KEY = 'mailhouse.autoRefreshEnabled';
+export const TAG_FIELD_CONFIGS_KEY = 'mailhouse.tagFieldConfigs';
+
+export const TAG_FIELD_KEYS = ['name', 'account', 'password', 'notes'] as const;
+
+export type TagFieldKey = (typeof TAG_FIELD_KEYS)[number] | 'email';
+
+export type TagFieldConfig = {
+  selectedFields: Exclude<TagFieldKey, 'email'>[];
+  updatedAt: string;
+};
+
+export type TagFieldConfigMap = Record<string, TagFieldConfig>;
+
+export type TagFieldValues = Partial<Record<TagFieldKey, string>>;
 
 export type SavedMailboxItem = {
   mailboxId: string;
   tag: string;
   createdAt: string;
   lastUsedAt: string;
+  fieldValues?: TagFieldValues;
 };
 
 export type TemporaryMailboxState = {
@@ -91,6 +106,38 @@ export function normalizeMailboxTag(value: string) {
   return value.trim().replace(/\s+/g, ' ').slice(0, 28);
 }
 
+export function createDefaultTagFieldConfig() {
+  return {
+    selectedFields: [...TAG_FIELD_KEYS],
+    updatedAt: new Date().toISOString(),
+  } satisfies TagFieldConfig;
+}
+
+export function normalizeTagFieldConfig(value?: Partial<TagFieldConfig> | null) {
+  const selectedFields = Array.isArray(value?.selectedFields)
+    ? value.selectedFields.filter((field): field is Exclude<TagFieldKey, 'email'> => TAG_FIELD_KEYS.includes(field as (typeof TAG_FIELD_KEYS)[number]))
+    : [...TAG_FIELD_KEYS];
+
+  return {
+    selectedFields: Array.from(new Set(selectedFields)),
+    updatedAt: typeof value?.updatedAt === 'string' ? value.updatedAt : new Date().toISOString(),
+  } satisfies TagFieldConfig;
+}
+
+export function normalizeTagFieldValues(value?: Partial<TagFieldValues> | null) {
+  const next: TagFieldValues = {};
+  const keys: TagFieldKey[] = ['name', 'account', 'email', 'password', 'notes'];
+
+  keys.forEach((key) => {
+    const rawValue = value?.[key];
+    if (typeof rawValue === 'string' && rawValue.trim()) {
+      next[key] = rawValue.trim();
+    }
+  });
+
+  return next;
+}
+
 function normalizeSavedMailboxItem(item: Partial<SavedMailboxItem>, fallbackNow: string) {
   const mailboxId = normalizeMailboxId(item.mailboxId ?? '');
   if (!mailboxId) {
@@ -107,6 +154,7 @@ function normalizeSavedMailboxItem(item: Partial<SavedMailboxItem>, fallbackNow:
     tag: normalizeMailboxTag(item.tag ?? ''),
     createdAt,
     lastUsedAt,
+    fieldValues: normalizeTagFieldValues(item.fieldValues ?? {}),
   } satisfies SavedMailboxItem;
 }
 
@@ -167,6 +215,10 @@ export function readSavedMailboxes() {
         tag: item.tag || existing.tag,
         createdAt,
         lastUsedAt,
+        fieldValues: {
+          ...(existing.fieldValues ?? {}),
+          ...(item.fieldValues ?? {}),
+        },
       });
     });
 
@@ -182,6 +234,44 @@ export function writeSavedMailboxes(items: SavedMailboxItem[]) {
   }
 
   window.localStorage.setItem(SAVED_MAILBOXES_KEY, JSON.stringify(items));
+}
+
+function normalizeTagFieldConfigMap(value: unknown) {
+  if (!value || typeof value !== 'object') {
+    return {} as TagFieldConfigMap;
+  }
+
+  return Object.entries(value as Record<string, Partial<TagFieldConfig>>).reduce<TagFieldConfigMap>((acc, [tag, config]) => {
+    const normalizedTag = normalizeMailboxTag(tag);
+    if (!normalizedTag) {
+      return acc;
+    }
+
+    acc[normalizedTag] = normalizeTagFieldConfig(config);
+    return acc;
+  }, {});
+}
+
+export function readTagFieldConfigs() {
+  if (typeof window === 'undefined') {
+    return {} as TagFieldConfigMap;
+  }
+
+  try {
+    const rawValue = window.localStorage.getItem(TAG_FIELD_CONFIGS_KEY);
+    const parsed = rawValue ? (JSON.parse(rawValue) as unknown) : {};
+    return normalizeTagFieldConfigMap(parsed);
+  } catch {
+    return {} as TagFieldConfigMap;
+  }
+}
+
+export function writeTagFieldConfigs(items: TagFieldConfigMap) {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  window.localStorage.setItem(TAG_FIELD_CONFIGS_KEY, JSON.stringify(items));
 }
 
 export function readTemporaryMailboxState() {

@@ -1,5 +1,5 @@
 import type { MailMessage } from '../components/mailboxUtils';
-import type { RegistrationDraft, SavedMailboxItem } from '../components/mailboxUtils';
+import type { RegistrationDraft, SavedMailboxItem, TagFieldConfigMap } from '../components/mailboxUtils';
 
 export type MailboxMode = 'temporary' | 'persistent';
 
@@ -17,6 +17,7 @@ export type MailboxResponse = {
 export type ClientSyncState = {
   status: string;
   savedMailboxes: SavedMailboxItem[];
+  tagFieldConfigs: TagFieldConfigMap;
   registrationDrafts: Record<string, RegistrationDraft>;
   registrationRuntimeDraft: RegistrationDraft | null;
   updatedAt?: string | null;
@@ -113,7 +114,7 @@ export async function getClientSyncState() {
   return apiRequest<ClientSyncState>('/api/client-sync');
 }
 
-export async function updateClientSyncState(payload: Partial<Pick<ClientSyncState, 'savedMailboxes' | 'registrationDrafts' | 'registrationRuntimeDraft'>>) {
+export async function updateClientSyncState(payload: Partial<Pick<ClientSyncState, 'savedMailboxes' | 'tagFieldConfigs' | 'registrationDrafts' | 'registrationRuntimeDraft'>>) {
   return apiRequest<ClientSyncState>('/api/client-sync', {
     method: 'PATCH',
     body: JSON.stringify(payload),

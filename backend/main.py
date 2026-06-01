@@ -72,6 +72,12 @@ class SavedMailboxItemPayload(BaseModel):
     tag: str = ""
     createdAt: str = ""
     lastUsedAt: str = ""
+    fieldValues: Optional[dict[str, str]] = None
+
+
+class TagFieldConfigPayload(BaseModel):
+    selectedFields: list[str] = Field(default_factory=list)
+    updatedAt: str = ""
 
 
 class RegistrationDraftPayload(BaseModel):
@@ -82,6 +88,7 @@ class RegistrationDraftPayload(BaseModel):
 
 class ClientSyncStateUpdatePayload(BaseModel):
     savedMailboxes: Optional[list[SavedMailboxItemPayload]] = None
+    tagFieldConfigs: Optional[dict[str, TagFieldConfigPayload]] = None
     registrationDrafts: Optional[dict[str, RegistrationDraftPayload]] = None
     registrationRuntimeDraft: Optional[RegistrationDraftPayload] = None
 
@@ -172,11 +179,66 @@ def normalize_registration_draft(value: Any) -> Optional[dict[str, str]]:
     }
 
 
-def normalize_saved_mailboxes(value: Any) -> list[dict[str, str]]:
+def normalize_tag_field_config(value: Any) -> Optional[dict[str, Any]]:
+    if not isinstance(value, dict):
+        return None
+
+    selected_fields_raw = value.get("selectedFields")
+    if not isinstance(selected_fields_raw, list):
+        selected_fields_raw = []
+
+    selected_fields: list[str] = []
+    for field_name in selected_fields_raw:
+        field_value = str(field_name or "").strip()
+        if field_value and field_value in {"name", "account", "password", "notes"} and field_value not in selected_fields:
+            selected_fields.append(field_value)
+
+    updated_at = parse_iso_datetime(value.get("updatedAt"))
+    updated_at_iso = (updated_at or datetime.now(timezone.utc)).astimezone(timezone.utc).isoformat()
+
+    return {
+        "selectedFields": selected_fields,
+        "updatedAt": updated_at_iso,
+    }
+
+
+def normalize_tag_field_configs(value: Any) -> dict[str, dict[str, Any]]:
+    if not isinstance(value, dict):
+        return {}
+
+    result: dict[str, dict[str, Any]] = {}
+    for raw_tag, raw_config in value.items():
+        tag = normalize_mailbox_tag(str(raw_tag or ""))
+        if not tag:
+            continue
+
+        config = normalize_tag_field_config(raw_config)
+        if config is None:
+          continue
+
+        result[tag] = config
+
+    return result
+
+
+def normalize_mailbox_field_values(value: Any) -> dict[str, str]:
+    if not isinstance(value, dict):
+        return {}
+
+    result: dict[str, str] = {}
+    for key in ("name", "account", "email", "password", "notes"):
+        raw_value = value.get(key)
+        if isinstance(raw_value, str) and raw_value.strip():
+            result[key] = raw_value.strip()
+
+    return result
+
+
+def normalize_saved_mailboxes(value: Any) -> list[dict[str, Any]]:
     if not isinstance(value, list):
         return []
 
-    normalized_items: list[dict[str, str]] = []
+    normalized_items: list[dict[str, Any]] = []
     now_iso = datetime.now(timezone.utc).isoformat()
 
     for raw_item in value:
@@ -199,10 +261,11 @@ def normalize_saved_mailboxes(value: Any) -> list[dict[str, str]]:
                 "tag": normalize_mailbox_tag(raw_item.get("tag", "")),
                 "createdAt": created_at_iso or now_iso,
                 "lastUsedAt": last_used_at_iso,
+                "fieldValues": normalize_mailbox_field_values(raw_item.get("fieldValues")),
             }
         )
 
-    deduped: dict[str, dict[str, str]] = {}
+    deduped: dict[str, dict[str, Any]] = {}
     for item in normalized_items:
         existing = deduped.get(item["mailboxId"])
         if existing is None:
@@ -219,6 +282,10 @@ def normalize_saved_mailboxes(value: Any) -> list[dict[str, str]]:
             "tag": item.get("tag") or existing.get("tag", ""),
             "createdAt": min(existing_created, current_created).astimezone(timezone.utc).isoformat(),
             "lastUsedAt": max(existing_last_used, current_last_used).astimezone(timezone.utc).isoformat(),
+            "fieldValues": {
+                **normalize_mailbox_field_values(existing.get("fieldValues")),
+                **normalize_mailbox_field_values(item.get("fieldValues")),
+            },
         }
 
     return list(deduped.values())
@@ -249,6 +316,7 @@ def normalize_client_sync_state(value: Any) -> dict[str, Any]:
 
     return {
         "savedMailboxes": normalize_saved_mailboxes(raw.get("savedMailboxes")),
+        "tagFieldConfigs": normalize_tag_field_configs(raw.get("tagFieldConfigs")),
         "registrationDrafts": normalize_registration_drafts(raw.get("registrationDrafts")),
         "registrationRuntimeDraft": runtime_draft,
         "updatedAt": firestore.SERVER_TIMESTAMP,
@@ -406,6 +474,7 @@ async def get_client_sync_state() -> dict[str, Any]:
         return {
             "status": "ok",
             "savedMailboxes": [],
+            "tagFieldConfigs": {},
             "registrationDrafts": {},
             "registrationRuntimeDraft": None,
             "updatedAt": None,
@@ -416,6 +485,7 @@ async def get_client_sync_state() -> dict[str, Any]:
     return {
         "status": "ok",
         "savedMailboxes": normalized.get("savedMailboxes", []),
+        "tagFieldConfigs": normalized.get("tagFieldConfigs", {}),
         "registrationDrafts": normalized.get("registrationDrafts", {}),
         "registrationRuntimeDraft": normalized.get("registrationRuntimeDraft"),
         "updatedAt": to_iso_string(data.get("updatedAt")),
@@ -428,6 +498,7 @@ async def update_client_sync_state(payload: ClientSyncStateUpdatePayload) -> dic
     current_data = sync_ref.get().to_dict() or {}
     merged_state = {
         "savedMailboxes": current_data.get("savedMailboxes", []),
+        "tagFieldConfigs": current_data.get("tagFieldConfigs", {}),
         "registrationDrafts": current_data.get("registrationDrafts", {}),
         "registrationRuntimeDraft": current_data.get("registrationRuntimeDraft"),
     }
@@ -435,6 +506,9 @@ async def update_client_sync_state(payload: ClientSyncStateUpdatePayload) -> dic
     payload_data = payload.model_dump(exclude_unset=True)
     if "savedMailboxes" in payload_data:
         merged_state["savedMailboxes"] = payload_data.get("savedMailboxes")
+
+    if "tagFieldConfigs" in payload_data:
+        merged_state["tagFieldConfigs"] = payload_data.get("tagFieldConfigs")
 
     if "registrationDrafts" in payload_data:
         merged_state["registrationDrafts"] = payload_data.get("registrationDrafts")
@@ -448,6 +522,7 @@ async def update_client_sync_state(payload: ClientSyncStateUpdatePayload) -> dic
     return {
         "status": "ok",
         "savedMailboxes": normalized.get("savedMailboxes", []),
+        "tagFieldConfigs": normalized.get("tagFieldConfigs", {}),
         "registrationDrafts": normalized.get("registrationDrafts", {}),
         "registrationRuntimeDraft": normalized.get("registrationRuntimeDraft"),
     }

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   MAIL_DOMAIN,
   cleanupReadMessages,
@@ -13,8 +13,6 @@ import {
   clearTemporaryMailboxState,
   readTemporaryMailboxState,
   writeTemporaryMailboxState,
-  readAutoRefreshEnabled,
-  writeAutoRefreshEnabled,
   type MailMessage,
 } from './mailboxUtils';
 
@@ -39,7 +37,8 @@ export default function TemporaryMailboxPanel({ isActive = true, onMoveToPersist
   const [copied, setCopied] = useState(false);
   const [busyAction, setBusyAction] = useState<BusyAction>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(false);
+  const [messagesCollapsed, setMessagesCollapsed] = useState(true);
+  const messagePollInFlightRef = useRef(false);
 
   const emailAddress = useMemo(() => (mailboxId ? `${mailboxId}@${MAIL_DOMAIN}` : ''), [mailboxId]);
   const isBusy = busyAction !== null;
@@ -51,13 +50,28 @@ export default function TemporaryMailboxPanel({ isActive = true, onMoveToPersist
   }, [mailboxId, savedMailboxes]);
 
   const syncMessages = async (targetMailboxId: string) => {
+    if (messagePollInFlightRef.current) {
+      return;
+    }
+
+    messagePollInFlightRef.current = true;
     try {
       const data = await getMailboxMessages(targetMailboxId);
       setMessages(data.messages ?? []);
     } catch (error) {
       console.error(error);
       setErrorText(error instanceof Error ? error.message : '載入信件失敗，請稍後再試。');
+    } finally {
+      messagePollInFlightRef.current = false;
     }
+  };
+
+  const getNextPollMs = () => {
+    if (typeof document !== 'undefined' && document.visibilityState !== 'visible') {
+      return 30000;
+    }
+
+    return messagesCollapsed ? 10000 : 4000;
   };
 
   const handleCreateMailbox = async () => {
@@ -79,15 +93,6 @@ export default function TemporaryMailboxPanel({ isActive = true, onMoveToPersist
       setBusyAction(null);
     }
   };
-
-  useEffect(() => {
-    writeAutoRefreshEnabled(autoRefreshEnabled);
-  }, [autoRefreshEnabled]);
-
-  useEffect(() => {
-    // Initialize auto refresh enabled state from localStorage
-    setAutoRefreshEnabled(readAutoRefreshEnabled());
-  }, []);
 
   useEffect(() => {
     if (!mailboxId) {
@@ -115,19 +120,40 @@ export default function TemporaryMailboxPanel({ isActive = true, onMoveToPersist
       return;
     }
 
-    // Sync messages immediately when tab becomes active
-    void syncMessages(mailboxId);
+    let disposed = false;
+    let timerId = 0;
 
-    if (!autoRefreshEnabled) {
-      return;
-    }
+    const poll = async () => {
+      await syncMessages(mailboxId);
+      if (disposed) {
+        return;
+      }
 
-    const timer = window.setInterval(() => {
-      void syncMessages(mailboxId);
-    }, 4000);
+      timerId = window.setTimeout(() => {
+        void poll();
+      }, getNextPollMs());
+    };
 
-    return () => window.clearInterval(timer);
-  }, [autoRefreshEnabled, isActive, mailboxId]);
+    const wakeAndSyncNow = () => {
+      if (disposed) {
+        return;
+      }
+
+      window.clearTimeout(timerId);
+      void poll();
+    };
+
+    void poll();
+    window.addEventListener('focus', wakeAndSyncNow);
+    document.addEventListener('visibilitychange', wakeAndSyncNow);
+
+    return () => {
+      disposed = true;
+      window.clearTimeout(timerId);
+      window.removeEventListener('focus', wakeAndSyncNow);
+      document.removeEventListener('visibilitychange', wakeAndSyncNow);
+    };
+  }, [isActive, mailboxId, messagesCollapsed]);
 
   const handleRefreshNow = async () => {
     if (!mailboxId || isRefreshing) {
@@ -286,9 +312,7 @@ export default function TemporaryMailboxPanel({ isActive = true, onMoveToPersist
         cleanupLabel="清理已讀 + 過期郵件"
         deleteAllLabel="刪除全部郵件"
         defaultCollapsed={true}
-        onCollapsedChange={(isCollapsed) => {
-          setAutoRefreshEnabled(!isCollapsed);
-        }}
+        onCollapsedChange={setMessagesCollapsed}
       />
     </section>
   );
