@@ -466,6 +466,11 @@ async def health_check() -> dict:
     return {"status": "ok"}
 
 
+@app.get("/ping")
+async def ping() -> dict[str, str]:
+    return {"message": "pong"}
+
+
 @app.get("/api/client-sync")
 async def get_client_sync_state() -> dict[str, Any]:
     sync_ref = db.collection("client_sync").document("default")
