@@ -23,4 +23,4 @@ if (!FIREBASE_ENV_READY) {
 const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
 
 export const db = getFirestore(app);
-export const MAIL_DOMAIN = import.meta.env.VITE_MAIL_DOMAIN ?? 'gradaide.xyz';
+export const MAIL_DOMAIN = import.meta.env.VITE_DEFAULT_MAIL_DOMAIN ?? import.meta.env.VITE_MAIL_DOMAIN ?? 'gradaide.xyz';

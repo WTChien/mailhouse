@@ -19,7 +19,14 @@ from pydantic import BaseModel, ConfigDict, Field
 load_dotenv()
 
 app = FastAPI(title="Mailhouse Webhook API", version="3.0.0")
-MAIL_DOMAIN = os.getenv("MAIL_DOMAIN", "gradaide.xyz").lower()
+DEFAULT_MAIL_DOMAIN = os.getenv("DEFAULT_MAIL_DOMAIN", os.getenv("MAIL_DOMAIN", "gradaide.xyz")).lower()
+MAIL_DOMAINS = [
+    domain.strip().lower()
+    for domain in os.getenv("MAIL_DOMAINS", DEFAULT_MAIL_DOMAIN).split(",")
+    if domain.strip()
+]
+if DEFAULT_MAIL_DOMAIN not in MAIL_DOMAINS:
+    MAIL_DOMAINS.insert(0, DEFAULT_MAIL_DOMAIN)
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "")
 CORS_ORIGINS = [
     origin.strip()
@@ -61,6 +68,7 @@ class EmailPayload(BaseModel):
 
 class PersistentMailboxPayload(BaseModel):
     mailboxId: str = Field(..., min_length=3, max_length=24)
+    domain: Optional[str] = None
 
 
 class ReadStatePayload(BaseModel):
@@ -69,6 +77,7 @@ class ReadStatePayload(BaseModel):
 
 class SavedMailboxItemPayload(BaseModel):
     mailboxId: str = ""
+    domain: str = ""
     tag: str = ""
     createdAt: str = ""
     lastUsedAt: str = ""
@@ -139,6 +148,26 @@ def extract_email(raw_value: str) -> Optional[str]:
 def normalize_mailbox_id(value: str) -> Optional[str]:
     cleaned = re.sub(r"[^a-z0-9]", "", value.lower())[:24]
     return cleaned or None
+
+
+def normalize_mail_domain(value: Optional[str]) -> str:
+    domain = str(value or DEFAULT_MAIL_DOMAIN).strip().lower()
+    if domain not in MAIL_DOMAINS:
+        raise HTTPException(status_code=400, detail="unsupported mail domain")
+
+    return domain
+
+
+def encode_mailbox_doc_id(prefix: str, domain: str) -> str:
+    if domain == DEFAULT_MAIL_DOMAIN:
+        return prefix
+
+    domain_key = re.sub(r"[^a-z0-9]+", "_", domain).strip("_")
+    return f"{prefix}__{domain_key}"
+
+
+def get_mailbox_ref(prefix: str, domain: str) -> firestore.DocumentReference:
+    return db.collection("mailboxes").document(encode_mailbox_doc_id(prefix, domain))
 
 
 def normalize_mailbox_tag(value: str) -> str:
@@ -248,6 +277,10 @@ def normalize_saved_mailboxes(value: Any) -> list[dict[str, Any]]:
         mailbox_id = normalize_mailbox_id(str(raw_item.get("mailboxId", "")))
         if not mailbox_id:
             continue
+        try:
+            mail_domain = normalize_mail_domain(str(raw_item.get("domain", "")) or DEFAULT_MAIL_DOMAIN)
+        except HTTPException:
+            continue
 
         created_at = parse_iso_datetime(raw_item.get("createdAt"))
         last_used_at = parse_iso_datetime(raw_item.get("lastUsedAt"))
@@ -258,6 +291,7 @@ def normalize_saved_mailboxes(value: Any) -> list[dict[str, Any]]:
         normalized_items.append(
             {
                 "mailboxId": mailbox_id,
+                "domain": mail_domain,
                 "tag": normalize_mailbox_tag(raw_item.get("tag", "")),
                 "createdAt": created_at_iso or now_iso,
                 "lastUsedAt": last_used_at_iso,
@@ -267,9 +301,10 @@ def normalize_saved_mailboxes(value: Any) -> list[dict[str, Any]]:
 
     deduped: dict[str, dict[str, Any]] = {}
     for item in normalized_items:
-        existing = deduped.get(item["mailboxId"])
+        dedupe_key = f'{item["mailboxId"]}@{item["domain"]}'
+        existing = deduped.get(dedupe_key)
         if existing is None:
-            deduped[item["mailboxId"]] = item
+            deduped[dedupe_key] = item
             continue
 
         existing_created = parse_iso_datetime(existing.get("createdAt")) or datetime.now(timezone.utc)
@@ -277,8 +312,9 @@ def normalize_saved_mailboxes(value: Any) -> list[dict[str, Any]]:
         current_created = parse_iso_datetime(item.get("createdAt")) or datetime.now(timezone.utc)
         current_last_used = parse_iso_datetime(item.get("lastUsedAt")) or datetime.now(timezone.utc)
 
-        deduped[item["mailboxId"]] = {
+        deduped[dedupe_key] = {
             "mailboxId": item["mailboxId"],
+            "domain": item["domain"],
             "tag": item.get("tag") or existing.get("tag", ""),
             "createdAt": min(existing_created, current_created).astimezone(timezone.utc).isoformat(),
             "lastUsedAt": max(existing_last_used, current_last_used).astimezone(timezone.utc).isoformat(),
@@ -342,16 +378,17 @@ def generate_mailbox_id(length: int = 5) -> str:
     return "".join(secrets.choice(RANDOM_CHARS) for _ in range(length))
 
 
-def get_prefix_from_recipient(raw_to: str) -> Optional[str]:
+def get_recipient_parts(raw_to: str) -> Optional[tuple[str, str]]:
     recipient = extract_email(raw_to)
     if not recipient or "@" not in recipient:
         return None
 
     prefix, domain = recipient.split("@", 1)
-    if MAIL_DOMAIN and domain.lower() != MAIL_DOMAIN:
+    domain = domain.lower()
+    if domain not in MAIL_DOMAINS:
         return None
 
-    return prefix.lower()
+    return prefix.lower(), domain
 
 
 def to_utc_datetime(value: Any) -> Optional[datetime]:
@@ -366,13 +403,14 @@ def to_iso_string(value: Any) -> Optional[str]:
     return dt.astimezone(timezone.utc).isoformat() if dt else None
 
 
-def serialize_mailbox(prefix: str, mailbox_data: dict[str, Any]) -> dict[str, Any]:
+def serialize_mailbox(prefix: str, domain: str, mailbox_data: dict[str, Any]) -> dict[str, Any]:
     expire_at = mailbox_data.get("expireAt")
     mode = str(mailbox_data.get("mode", "temporary" if expire_at else "persistent")).lower()
 
     return {
         "mailboxId": prefix,
-        "email": f"{prefix}@{MAIL_DOMAIN}",
+        "domain": domain,
+        "email": f"{prefix}@{domain}",
         "mode": mode,
         "expireAt": to_iso_string(expire_at),
         "createdAt": to_iso_string(mailbox_data.get("createdAt")),
@@ -538,16 +576,27 @@ async def health_check() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.get("/api/mail-domains")
+async def get_mail_domains() -> dict[str, Any]:
+    return {
+        "status": "ok",
+        "defaultDomain": DEFAULT_MAIL_DOMAIN,
+        "domains": MAIL_DOMAINS,
+    }
+
+
 @app.post("/api/mailboxes/temp")
-async def create_temporary_mailbox() -> dict[str, Any]:
+async def create_temporary_mailbox(domain: Optional[str] = Query(default=None)) -> dict[str, Any]:
+    mail_domain = normalize_mail_domain(domain)
     for _ in range(20):
         prefix = generate_mailbox_id()
-        mailbox_ref = db.collection("mailboxes").document(prefix)
+        mailbox_ref = get_mailbox_ref(prefix, mail_domain)
 
         if not mailbox_ref.get().exists:
             expire_at = datetime.now(timezone.utc) + timedelta(minutes=TEMP_MAILBOX_MINUTES)
             mailbox_ref.set(
                 {
+                    "domain": mail_domain,
                     "mode": "temporary",
                     "expireAt": expire_at,
                     "createdAt": firestore.SERVER_TIMESTAMP,
@@ -558,7 +607,8 @@ async def create_temporary_mailbox() -> dict[str, Any]:
             return {
                 "status": "ok",
                 "mailboxId": prefix,
-                "email": f"{prefix}@{MAIL_DOMAIN}",
+                "domain": mail_domain,
+                "email": f"{prefix}@{mail_domain}",
                 "mode": "temporary",
                 "expireAt": expire_at.isoformat(),
             }
@@ -568,11 +618,12 @@ async def create_temporary_mailbox() -> dict[str, Any]:
 
 @app.post("/api/mailboxes/persistent")
 async def create_or_load_persistent_mailbox(payload: PersistentMailboxPayload) -> dict[str, Any]:
+    mail_domain = normalize_mail_domain(payload.domain)
     prefix = normalize_mailbox_id(payload.mailboxId)
     if not prefix or len(prefix) < 3:
         raise HTTPException(status_code=400, detail="mailbox name must be at least 3 alphanumeric characters")
 
-    mailbox_ref = db.collection("mailboxes").document(prefix)
+    mailbox_ref = get_mailbox_ref(prefix, mail_domain)
     mailbox_snapshot = mailbox_ref.get()
     mailbox_data = mailbox_snapshot.to_dict() or {}
 
@@ -588,6 +639,7 @@ async def create_or_load_persistent_mailbox(payload: PersistentMailboxPayload) -
 
     mailbox_ref.set(
         {
+            "domain": mail_domain,
             "mode": "persistent",
             "expireAt": None,
             "createdAt": mailbox_data.get("createdAt", firestore.SERVER_TIMESTAMP),
@@ -599,19 +651,21 @@ async def create_or_load_persistent_mailbox(payload: PersistentMailboxPayload) -
     return {
         "status": "ok",
         "mailboxId": prefix,
-        "email": f"{prefix}@{MAIL_DOMAIN}",
+        "domain": mail_domain,
+        "email": f"{prefix}@{mail_domain}",
         "mode": "persistent",
         "expireAt": None,
     }
 
 
 @app.post("/api/mailboxes/{mailbox_id}/promote")
-async def promote_mailbox_to_persistent(mailbox_id: str) -> dict[str, Any]:
+async def promote_mailbox_to_persistent(mailbox_id: str, domain: Optional[str] = Query(default=None)) -> dict[str, Any]:
+    mail_domain = normalize_mail_domain(domain)
     prefix = normalize_mailbox_id(mailbox_id or "")
     if not prefix:
         raise HTTPException(status_code=400, detail="invalid mailbox id")
 
-    mailbox_ref = db.collection("mailboxes").document(prefix)
+    mailbox_ref = get_mailbox_ref(prefix, mail_domain)
     mailbox_snapshot = mailbox_ref.get()
     if not mailbox_snapshot.exists:
         raise HTTPException(status_code=404, detail="mailbox not found")
@@ -625,6 +679,7 @@ async def promote_mailbox_to_persistent(mailbox_id: str) -> dict[str, Any]:
 
     mailbox_ref.set(
         {
+            "domain": mail_domain,
             "mode": "persistent",
             "expireAt": None,
             "createdAt": mailbox_data.get("createdAt", firestore.SERVER_TIMESTAMP),
@@ -636,19 +691,21 @@ async def promote_mailbox_to_persistent(mailbox_id: str) -> dict[str, Any]:
     return {
         "status": "ok",
         "mailboxId": prefix,
-        "email": f"{prefix}@{MAIL_DOMAIN}",
+        "domain": mail_domain,
+        "email": f"{prefix}@{mail_domain}",
         "mode": "persistent",
         "expireAt": None,
     }
 
 
 @app.post("/api/mailboxes/{mailbox_id}/extend")
-async def extend_temporary_mailbox(mailbox_id: str) -> dict[str, Any]:
+async def extend_temporary_mailbox(mailbox_id: str, domain: Optional[str] = Query(default=None)) -> dict[str, Any]:
+    mail_domain = normalize_mail_domain(domain)
     prefix = normalize_mailbox_id(mailbox_id or "")
     if not prefix:
         raise HTTPException(status_code=400, detail="invalid mailbox id")
 
-    mailbox_ref = db.collection("mailboxes").document(prefix)
+    mailbox_ref = get_mailbox_ref(prefix, mail_domain)
     mailbox_snapshot = mailbox_ref.get()
     if not mailbox_snapshot.exists:
         raise HTTPException(status_code=404, detail="mailbox not found")
@@ -671,19 +728,21 @@ async def extend_temporary_mailbox(mailbox_id: str) -> dict[str, Any]:
     return {
         "status": "ok",
         "mailboxId": prefix,
-        "email": f"{prefix}@{MAIL_DOMAIN}",
+        "domain": mail_domain,
+        "email": f"{prefix}@{mail_domain}",
         "mode": "temporary",
         "expireAt": expire_at.isoformat(),
     }
 
 
 @app.get("/api/mailboxes/{mailbox_id}/messages")
-async def get_mailbox_messages(mailbox_id: str, limit: int = Query(default=50, ge=1, le=200)) -> dict[str, Any]:
+async def get_mailbox_messages(mailbox_id: str, domain: Optional[str] = Query(default=None), limit: int = Query(default=50, ge=1, le=200)) -> dict[str, Any]:
+    mail_domain = normalize_mail_domain(domain)
     prefix = normalize_mailbox_id(mailbox_id or "")
     if not prefix:
         raise HTTPException(status_code=400, detail="invalid mailbox id")
 
-    mailbox_ref = db.collection("mailboxes").document(prefix)
+    mailbox_ref = get_mailbox_ref(prefix, mail_domain)
     mailbox_snapshot = mailbox_ref.get()
     if not mailbox_snapshot.exists:
         raise HTTPException(status_code=404, detail="mailbox not found")
@@ -698,18 +757,19 @@ async def get_mailbox_messages(mailbox_id: str, limit: int = Query(default=50, g
 
     return {
         "status": "ok",
-        **serialize_mailbox(prefix, mailbox_data),
+        **serialize_mailbox(prefix, mail_domain, mailbox_data),
         "messages": [serialize_message(message) for message in messages_query],
     }
 
 
 @app.patch("/api/mailboxes/{mailbox_id}/messages/{message_id}/read")
-async def mark_message_read(mailbox_id: str, message_id: str, payload: ReadStatePayload) -> dict[str, Any]:
+async def mark_message_read(mailbox_id: str, message_id: str, payload: ReadStatePayload, domain: Optional[str] = Query(default=None)) -> dict[str, Any]:
+    mail_domain = normalize_mail_domain(domain)
     prefix = normalize_mailbox_id(mailbox_id or "")
     if not prefix:
         raise HTTPException(status_code=400, detail="invalid mailbox id")
 
-    message_ref = db.collection("mailboxes").document(prefix).collection("messages").document(message_id)
+    message_ref = get_mailbox_ref(prefix, mail_domain).collection("messages").document(message_id)
     message_snapshot = message_ref.get()
     if not message_snapshot.exists:
         raise HTTPException(status_code=404, detail="message not found")
@@ -731,12 +791,13 @@ async def mark_message_read(mailbox_id: str, message_id: str, payload: ReadState
 
 
 @app.delete("/api/mailboxes/{mailbox_id}/messages")
-async def delete_all_mailbox_messages(mailbox_id: str) -> dict[str, Any]:
+async def delete_all_mailbox_messages(mailbox_id: str, domain: Optional[str] = Query(default=None)) -> dict[str, Any]:
+    mail_domain = normalize_mail_domain(domain)
     prefix = normalize_mailbox_id(mailbox_id or "")
     if not prefix:
         raise HTTPException(status_code=400, detail="invalid mailbox id")
 
-    mailbox_ref = db.collection("mailboxes").document(prefix)
+    mailbox_ref = get_mailbox_ref(prefix, mail_domain)
     mailbox_snapshot = mailbox_ref.get()
     if not mailbox_snapshot.exists:
         raise HTTPException(status_code=404, detail="mailbox not found")
@@ -778,12 +839,13 @@ async def cleanup_messages(read_retention_hours: int = Query(default=0, ge=0, le
 
 
 @app.delete("/api/mailboxes/{mailbox_id}")
-async def delete_mailbox(mailbox_id: str) -> dict[str, Any]:
+async def delete_mailbox(mailbox_id: str, domain: Optional[str] = Query(default=None)) -> dict[str, Any]:
+    mail_domain = normalize_mail_domain(domain)
     prefix = normalize_mailbox_id(mailbox_id or "")
     if not prefix:
         raise HTTPException(status_code=400, detail="invalid mailbox id")
 
-    mailbox_ref = db.collection("mailboxes").document(prefix)
+    mailbox_ref = get_mailbox_ref(prefix, mail_domain)
     mailbox_snapshot = mailbox_ref.get()
     if not mailbox_snapshot.exists:
         return {"status": "ok", "mailboxId": prefix}
@@ -844,11 +906,12 @@ async def receive_email(
         if calendar_part:
             calendar_value = f"CALENDAR ({calendar_part.get('method') or 'EVENT'})"
 
-    prefix = get_prefix_from_recipient(to_value)
-    if not prefix:
+    recipient_parts = get_recipient_parts(to_value)
+    if not recipient_parts:
         return JSONResponse(status_code=200, content={"status": "ignored", "reason": "invalid_recipient"})
 
-    mailbox_ref = db.collection("mailboxes").document(prefix)
+    prefix, mail_domain = recipient_parts
+    mailbox_ref = get_mailbox_ref(prefix, mail_domain)
     mailbox_snapshot = mailbox_ref.get()
 
     if not mailbox_snapshot.exists:
@@ -876,4 +939,4 @@ async def receive_email(
     )
 
     mailbox_ref.set({"updatedAt": firestore.SERVER_TIMESTAMP}, merge=True)
-    return JSONResponse(status_code=200, content={"status": "stored", "mailbox": prefix, "mode": mailbox_mode})
+    return JSONResponse(status_code=200, content={"status": "stored", "mailbox": prefix, "domain": mail_domain, "mode": mailbox_mode})

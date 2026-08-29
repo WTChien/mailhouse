@@ -92,7 +92,8 @@ npm run check
 Then set these values in `worker/.dev.vars`:
 
 - `API_WEBHOOK_URL=https://your-backend-domain/api/webhook/email`
-- `MAIL_DOMAIN=gradaide.xyz`
+- `DEFAULT_MAIL_DOMAIN=gradaide.xyz`
+- `MAIL_DOMAINS=gradaide.xyz,weiting.win`
 - `WEBHOOK_SECRET=your_shared_secret`
 
 After that, deploy the worker and bind it to the catch-all route for `gradaide.xyz` in Cloudflare Email Routing.
@@ -110,7 +111,8 @@ uvicorn main:app --reload --port 8000 --env-file .env
 
 Set these values in `backend/.env` as needed:
 
-- `MAIL_DOMAIN=gradaide.xyz`
+- `DEFAULT_MAIL_DOMAIN=gradaide.xyz`
+- `MAIL_DOMAINS=gradaide.xyz,weiting.win`
 - `WEBHOOK_SECRET=your_shared_secret`
 - `TEMP_MAILBOX_MINUTES=30`
 - `FIREBASE_SERVICE_ACCOUNT_JSON=...` **or** `FIREBASE_CREDENTIALS_PATH=...`
@@ -131,7 +133,8 @@ npm run dev
 Set these values in `frontend/.env`:
 
 - `VITE_API_BASE_URL=http://127.0.0.1:8000`
-- `VITE_MAIL_DOMAIN=gradaide.xyz`
+- `VITE_DEFAULT_MAIL_DOMAIN=gradaide.xyz`
+- `VITE_MAIL_DOMAINS=gradaide.xyz,weiting.win`
 
 ## API overview
 

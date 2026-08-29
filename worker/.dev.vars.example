@@ -1,3 +1,4 @@
 API_WEBHOOK_URL=http://127.0.0.1:8000/api/webhook/email
-MAIL_DOMAIN=gradaide.xyz
+DEFAULT_MAIL_DOMAIN=gradaide.xyz
+MAIL_DOMAINS=gradaide.xyz,weiting.win
 WEBHOOK_SECRET=change_me_optional

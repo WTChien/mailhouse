@@ -32,11 +32,11 @@ popd
 echo [mailhouse] Waiting for backend to be ready...
 powershell -NoProfile -Command "$ok=$false; for($i=0;$i -lt 20;$i++){ try{ $r=Invoke-WebRequest -Uri 'http://127.0.0.1:5556/api/health' -Method Get -UseBasicParsing -ErrorAction Stop; $ok=$true; break } catch { Start-Sleep -Milliseconds 500 } }; if(-not $ok){ Write-Error 'Backend did not start in time' }"
 
-echo [mailhouse] Starting frontend on http://127.0.0.1:5555
+echo [mailhouse] Starting frontend on http://localhost:5173
 echo [mailhouse] Press Ctrl+C to stop both services.
 
 pushd "%CD%\frontend"
-call npm run dev
+call npm run dev -- --host localhost --port 5173
 set "FRONTEND_EXIT=%ERRORLEVEL%"
 popd
 

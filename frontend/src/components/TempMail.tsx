@@ -12,7 +12,7 @@ import {
   writeSavedMailboxes,
   writeTagFieldConfigs,
 } from './mailboxUtils';
-import { getClientSyncState, updateClientSyncState } from '../lib/api';
+import { DEFAULT_MAIL_DOMAIN, MAIL_DOMAINS, getClientSyncState, setActiveMailDomain, updateClientSyncState } from '../lib/api';
 
 const tabs = [
   { id: 'persistent', label: '保留信箱', hint: '長期分類管理' },
@@ -22,6 +22,14 @@ const tabs = [
 type TabId = (typeof tabs)[number]['id'];
 
 export default function TempMail() {
+  const [activeDomain, setActiveDomain] = useState(() => {
+    if (typeof window === 'undefined') {
+      return DEFAULT_MAIL_DOMAIN;
+    }
+
+    const storedDomain = window.localStorage.getItem('mailhouse.activeDomain') ?? '';
+    return MAIL_DOMAINS.includes(storedDomain) ? storedDomain : DEFAULT_MAIL_DOMAIN;
+  });
   const [activeTab, setActiveTab] = useState<TabId>('persistent');
   const [requestedPromotion, setRequestedPromotion] = useState<PersistentPromotionRequest | null>(null);
   const [activeTagNavbar, setActiveTagNavbar] = useState('all');
@@ -29,6 +37,11 @@ export default function TempMail() {
   const [savedMailboxes, setSavedMailboxes] = useState<any[]>([]);
   const prevActiveTabRef = useRef<TabId>('persistent');
 
+  useEffect(() => {
+    setActiveMailDomain(activeDomain);
+    window.localStorage.setItem('mailhouse.activeDomain', activeDomain);
+    setActiveTagNavbar('all');
+  }, [activeDomain]);
 
   useEffect(() => {
     let disposed = false;
@@ -99,6 +112,15 @@ export default function TempMail() {
           ))}
         </div>
 
+        <label className="domain-switcher">
+          <span className="field-label">Domain</span>
+          <select value={activeDomain} onChange={(event) => setActiveDomain(event.target.value)}>
+            {MAIL_DOMAINS.map((domain: string) => (
+              <option key={domain} value={domain}>{domain}</option>
+            ))}
+          </select>
+        </label>
+
         {activeTab === 'persistent' ? (
           <div className="tabs-navbar__secondary" role="tablist" aria-label="標籤管理頁面">
             <button
@@ -108,7 +130,10 @@ export default function TempMail() {
             >
               全部帳號
             </button>
-            {Array.from(new Set(savedMailboxes.map((item) => item.tag).filter(Boolean))).map((tag) => {
+            {Array.from(new Set(savedMailboxes
+              .filter((item) => (item.domain || DEFAULT_MAIL_DOMAIN) === activeDomain)
+              .map((item) => item.tag)
+              .filter(Boolean))).map((tag) => {
               const normalizedTag = String(tag);
               return (
                 <button
@@ -128,6 +153,7 @@ export default function TempMail() {
       <div hidden={activeTab !== 'temporary'} aria-hidden={activeTab !== 'temporary'}>
         <TemporaryMailboxPanel
           isActive={activeTab === 'temporary'}
+          activeDomain={activeDomain}
           savedMailboxes={savedMailboxes}
           onMoveToPersistent={(mailboxId) => {
             setRequestedPromotion({
@@ -141,6 +167,7 @@ export default function TempMail() {
       <div hidden={activeTab !== 'persistent'} aria-hidden={activeTab !== 'persistent'}>
         <PersistentMailboxPanel
           isActive={activeTab === 'persistent'}
+          activeDomain={activeDomain}
           requestedPromotion={requestedPromotion}
           activeTagNavbar={activeTagNavbar}
           onActiveTagNavbarChange={setActiveTagNavbar}

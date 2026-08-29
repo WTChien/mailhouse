@@ -2,11 +2,11 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   cleanupReadMessages,
   createOrLoadPersistentMailbox,
+  DEFAULT_MAIL_DOMAIN,
   deleteAllMailboxMessages,
   deleteMailbox,
   getClientSyncState,
   getMailboxMessages,
-  MAIL_DOMAIN,
   markMessageRead,
   updateClientSyncState,
 } from '../lib/api';
@@ -38,9 +38,10 @@ function mergeSavedMailboxLists(localItems: SavedMailboxItem[], cloudItems: Save
   const merged = new Map<string, SavedMailboxItem>();
 
   const mergeOne = (item: SavedMailboxItem) => {
-    const existing = merged.get(item.mailboxId);
+    const key = `${item.mailboxId}@${item.domain || ''}`;
+    const existing = merged.get(key);
     if (!existing) {
-      merged.set(item.mailboxId, item);
+      merged.set(key, item);
       return;
     }
 
@@ -51,8 +52,9 @@ function mergeSavedMailboxLists(localItems: SavedMailboxItem[], cloudItems: Save
       ? existing.lastUsedAt
       : item.lastUsedAt;
 
-    merged.set(item.mailboxId, {
+    merged.set(key, {
       mailboxId: item.mailboxId,
+      domain: item.domain || existing.domain,
       tag: item.tag || existing.tag,
       createdAt,
       lastUsedAt,
@@ -96,6 +98,7 @@ export type PersistentPromotionRequest = {
 
 type PersistentMailboxPanelProps = {
   isActive?: boolean;
+  activeDomain: string;
   requestedPromotion?: PersistentPromotionRequest | null;
   activeTagNavbar?: string;
   onActiveTagNavbarChange?: (tag: string) => void;
@@ -107,6 +110,7 @@ type PersistentMailboxPanelProps = {
 
 export default function PersistentMailboxPanel({
   isActive = true,
+  activeDomain,
   requestedPromotion = null,
   activeTagNavbar: activeTagNavbarProp,
   onActiveTagNavbarChange,
@@ -143,9 +147,13 @@ export default function PersistentMailboxPanel({
   const cloudLoadedRef = useRef(false);
   const messagePollInFlightRef = useRef(false);
 
-  const emailAddress = useMemo(() => (mailboxId ? `${mailboxId}@${MAIL_DOMAIN}` : ''), [mailboxId]);
+  const emailAddress = useMemo(() => (mailboxId ? `${mailboxId}@${activeDomain}` : ''), [activeDomain, mailboxId]);
   const isBusy = busyAction !== null;
   const activeTagNavbar = activeTagNavbarProp ?? 'all';
+  const currentDomainSavedMailboxes = useMemo(
+    () => savedMailboxes.filter((item) => (item.domain || DEFAULT_MAIL_DOMAIN) === activeDomain),
+    [activeDomain, savedMailboxes],
+  );
 
   useEffect(() => {
     writeSavedListCollapsed(savedListCollapsed);
@@ -211,6 +219,14 @@ export default function PersistentMailboxPanel({
     onSavedMailboxesChange?.(savedMailboxes);
   }, [savedMailboxes, onSavedMailboxesChange]);
 
+  useEffect(() => {
+    setMailboxId('');
+    setRequestedMailboxId('');
+    setRequestedTag('');
+    setMessages([]);
+    setErrorText('');
+  }, [activeDomain]);
+
   const syncMessages = async (targetMailboxId: string) => {
     if (messagePollInFlightRef.current) {
       return;
@@ -218,7 +234,7 @@ export default function PersistentMailboxPanel({
 
     messagePollInFlightRef.current = true;
     try {
-      const data = await getMailboxMessages(targetMailboxId);
+      const data = await getMailboxMessages(targetMailboxId, activeDomain);
       setMessages(data.messages ?? []);
     } catch (error) {
       console.error(error);
@@ -249,25 +265,26 @@ export default function PersistentMailboxPanel({
     setBusyMailboxTarget(prefix);
 
     try {
-      const data = await createOrLoadPersistentMailbox(prefix);
+      const data = await createOrLoadPersistentMailbox(prefix, activeDomain);
       const nowIso = new Date().toISOString();
       setMailboxId(data.mailboxId);
       setRequestedMailboxId(data.mailboxId);
       setSavedMailboxes((prev) => {
-        const existing = prev.find((item) => item.mailboxId === data.mailboxId);
+        const existing = prev.find((item) => item.mailboxId === data.mailboxId && (item.domain || DEFAULT_MAIL_DOMAIN) === activeDomain);
         const resolvedTag = normalizedTag || existing?.tag || '';
         const nextItem: SavedMailboxItem = {
           mailboxId: data.mailboxId,
+          domain: activeDomain,
           tag: resolvedTag,
           createdAt: existing?.createdAt ?? nowIso,
           lastUsedAt: nowIso,
           fieldValues: {
             ...(existing?.fieldValues ?? {}),
-            email: `${data.mailboxId}@${MAIL_DOMAIN}`,
+            email: data.email,
           },
         };
 
-        return [nextItem, ...prev.filter((item) => item.mailboxId !== data.mailboxId)];
+        return [nextItem, ...prev.filter((item) => !(item.mailboxId === data.mailboxId && (item.domain || DEFAULT_MAIL_DOMAIN) === activeDomain))];
       });
       setRequestedTag((prev) => normalizeMailboxTag(normalizedTag || prev));
       setMessages([]);
@@ -290,7 +307,7 @@ export default function PersistentMailboxPanel({
       return;
     }
 
-    if (typeof window !== 'undefined' && !window.confirm(`確定刪除保留信箱 ${targetMailboxId}@${MAIL_DOMAIN}？`)) {
+    if (typeof window !== 'undefined' && !window.confirm(`確定刪除保留信箱 ${targetMailboxId}@${activeDomain}？`)) {
       return;
     }
 
@@ -298,8 +315,8 @@ export default function PersistentMailboxPanel({
     setBusyMailboxTarget(targetMailboxId);
 
     try {
-      await deleteMailbox(targetMailboxId);
-      setSavedMailboxes((prev) => prev.filter((item) => item.mailboxId !== targetMailboxId));
+      await deleteMailbox(targetMailboxId, activeDomain);
+      setSavedMailboxes((prev) => prev.filter((item) => !(item.mailboxId === targetMailboxId && (item.domain || DEFAULT_MAIL_DOMAIN) === activeDomain)));
 
       if (targetMailboxId === mailboxId) {
         setMailboxId('');
@@ -388,12 +405,12 @@ export default function PersistentMailboxPanel({
   const availableTags = useMemo(() => {
     return Array.from(
       new Set(
-        savedMailboxes
+        currentDomainSavedMailboxes
           .map((item) => normalizeMailboxTag(item.tag))
           .filter(Boolean),
       ),
     ).sort((a, b) => a.localeCompare(b, 'zh-Hant'));
-  }, [savedMailboxes]);
+  }, [currentDomainSavedMailboxes]);
 
   useEffect(() => {
     if (
@@ -406,8 +423,8 @@ export default function PersistentMailboxPanel({
   }, [activeTagNavbar, availableTags, onActiveTagNavbarChange, requestedTag]);
 
   const savedMailboxMap = useMemo(() => {
-    return new Map(savedMailboxes.map((item) => [item.mailboxId, item]));
-  }, [savedMailboxes]);
+    return new Map(currentDomainSavedMailboxes.map((item) => [item.mailboxId, item]));
+  }, [currentDomainSavedMailboxes]);
 
   const activeTag = activeTagNavbar === 'all' ? normalizeMailboxTag(requestedTag) : activeTagNavbar;
   const activeTagConfig = activeTag ? (tagFieldConfigs[activeTag] ?? createDefaultTagFieldConfig()) : createDefaultTagFieldConfig();
@@ -416,8 +433,8 @@ export default function PersistentMailboxPanel({
       return null;
     }
 
-    return savedMailboxes.find((item) => normalizeMailboxTag(item.tag) === activeTag) ?? null;
-  }, [activeTag, savedMailboxes]);
+    return currentDomainSavedMailboxes.find((item) => normalizeMailboxTag(item.tag) === activeTag) ?? null;
+  }, [activeTag, currentDomainSavedMailboxes]);
 
   const activeTagMailboxFieldValues = normalizeTagFieldValues(activeTagMailbox?.fieldValues ?? {});
 
@@ -446,7 +463,7 @@ export default function PersistentMailboxPanel({
     }
 
     setSavedMailboxes((prev) => prev.map((item) => {
-      if (item.mailboxId !== activeTagMailbox.mailboxId) {
+      if (item.mailboxId !== activeTagMailbox.mailboxId || (item.domain || DEFAULT_MAIL_DOMAIN) !== activeDomain) {
         return item;
       }
 
@@ -455,7 +472,7 @@ export default function PersistentMailboxPanel({
         fieldValues: {
           ...(item.fieldValues ?? {}),
           ...normalizeTagFieldValues(tagFieldDraft),
-          email: `${item.mailboxId}@${MAIL_DOMAIN}`,
+          email: `${item.mailboxId}@${activeDomain}`,
         },
       };
     }));
@@ -542,9 +559,9 @@ export default function PersistentMailboxPanel({
   }, [focusMailboxId, focusRequestId, savedMailboxMap]);
 
   const fallbackMailboxId = useMemo(() => {
-    const sorted = [...savedMailboxes].sort((a, b) => new Date(b.lastUsedAt).getTime() - new Date(a.lastUsedAt).getTime());
+    const sorted = [...currentDomainSavedMailboxes].sort((a, b) => new Date(b.lastUsedAt).getTime() - new Date(a.lastUsedAt).getTime());
     return sorted[0]?.mailboxId ?? '';
-  }, [savedMailboxes]);
+  }, [currentDomainSavedMailboxes]);
 
   useEffect(() => {
     if (promotionMailboxId) {
@@ -558,12 +575,12 @@ export default function PersistentMailboxPanel({
 
   useEffect(() => {
     if (activeTagNavbar !== 'all') {
-      const targetMailbox = savedMailboxes.find((item) => normalizeMailboxTag(item.tag) === activeTagNavbar);
+      const targetMailbox = currentDomainSavedMailboxes.find((item) => normalizeMailboxTag(item.tag) === activeTagNavbar);
       if (targetMailbox && targetMailbox.mailboxId !== mailboxId) {
         void openPersistentMailbox(targetMailbox.mailboxId, targetMailbox.tag);
       }
     }
-  }, [activeTagNavbar, mailboxId, savedMailboxes]);
+  }, [activeTagNavbar, currentDomainSavedMailboxes, mailboxId]);
 
   useEffect(() => {
     if (!isActive || !mailboxId) {
@@ -611,7 +628,7 @@ export default function PersistentMailboxPanel({
     }
 
     try {
-      await markMessageRead(mailboxId, messageId, isRead);
+      await markMessageRead(mailboxId, messageId, isRead, activeDomain);
       await syncMessages(mailboxId);
     } catch (error) {
       console.error(error);
@@ -637,7 +654,7 @@ export default function PersistentMailboxPanel({
     }
 
     try {
-      await deleteAllMailboxMessages(mailboxId);
+      await deleteAllMailboxMessages(mailboxId, activeDomain);
       await syncMessages(mailboxId);
     } catch (error) {
       console.error(error);
@@ -650,7 +667,7 @@ export default function PersistentMailboxPanel({
   const isDeletingCurrent = busyAction === 'delete' && busyMailboxTarget === mailboxId;
 
   const visibleSavedMailboxes = useMemo(() => {
-    const filtered = savedMailboxes.filter((item) => {
+    const filtered = currentDomainSavedMailboxes.filter((item) => {
       if (activeTagNavbar === 'all') {
         return true;
       }
@@ -669,7 +686,7 @@ export default function PersistentMailboxPanel({
 
       return new Date(b.lastUsedAt).getTime() - new Date(a.lastUsedAt).getTime();
     });
-  }, [activeTagNavbar, savedListSort, savedMailboxes]);
+  }, [activeTagNavbar, currentDomainSavedMailboxes, savedListSort]);
 
   const navbarTabs = useMemo(() => {
     return ['all', ...availableTags];
@@ -677,7 +694,11 @@ export default function PersistentMailboxPanel({
 
   const handleSaveTag = (targetMailboxId: string) => {
     const nextTag = normalizeMailboxTag(tagDraftByMailbox[targetMailboxId] ?? '');
-    setSavedMailboxes((prev) => prev.map((item) => (item.mailboxId === targetMailboxId ? { ...item, tag: nextTag } : item)));
+    setSavedMailboxes((prev) => prev.map((item) => (
+      item.mailboxId === targetMailboxId && (item.domain || DEFAULT_MAIL_DOMAIN) === activeDomain
+        ? { ...item, tag: nextTag }
+        : item
+    )));
 
     if (targetMailboxId === mailboxId) {
       setRequestedTag(nextTag);
@@ -816,7 +837,7 @@ export default function PersistentMailboxPanel({
               <div className="tag-field-grid">
                 <label className="tag-field-item">
                   <span className="field-label">信箱</span>
-                  <input type="text" value={emailAddress || `${activeTagMailbox.mailboxId}@${MAIL_DOMAIN}`} readOnly />
+                  <input type="text" value={emailAddress || `${activeTagMailbox.mailboxId}@${activeDomain}`} readOnly />
                 </label>
 
                 {isTagFieldEnabled('name') ? (
@@ -891,7 +912,7 @@ export default function PersistentMailboxPanel({
             </button>
             <h3>{activeTagNavbar === 'all' ? '保留電子郵件清單' : `${activeTagNavbar} 清單`}</h3>
           </div>
-          <span>{visibleSavedMailboxes.length} / {savedMailboxes.length} 個</span>
+          <span>{visibleSavedMailboxes.length} / {currentDomainSavedMailboxes.length} 個</span>
         </div>
 
         {!savedListCollapsed && (
@@ -910,7 +931,7 @@ export default function PersistentMailboxPanel({
               </label>
             </div>
 
-            {savedMailboxes.length === 0 ? (
+            {currentDomainSavedMailboxes.length === 0 ? (
               <div className="empty-state">目前還沒有保存任何保留信箱。</div>
             ) : visibleSavedMailboxes.length === 0 ? (
               <div className="empty-state">目前篩選條件下沒有信箱。</div>
@@ -927,7 +948,7 @@ export default function PersistentMailboxPanel({
                 <div className="saved-chip" key={savedMailbox.mailboxId}>
                   <div className="saved-chip__main">
                     <strong>
-                      {savedMailbox.mailboxId}@{MAIL_DOMAIN}
+                      {savedMailbox.mailboxId}@{savedMailbox.domain || DEFAULT_MAIL_DOMAIN}
                       {savedName ? <span className="saved-chip__name"> • {savedName}</span> : null}
                     </strong>
                     {savedMailbox.tag ? <span className="tag-pill">{savedMailbox.tag}</span> : <span className="muted">未設定標籤</span>}
@@ -1010,7 +1031,7 @@ export default function PersistentMailboxPanel({
           <div className="modal-card" role="dialog" aria-modal="true" aria-labelledby="promotion-tag-title">
             <div className="message-section__header">
               <h3 id="promotion-tag-title">加入保留信箱前設定標籤</h3>
-              <span>{promotionMailboxId}@{MAIL_DOMAIN}</span>
+              <span>{promotionMailboxId}@{activeDomain}</span>
             </div>
 
             <p className="muted modal-copy">這個信箱已經移到保留信箱。你現在可以直接沿用既有標籤、輸入新標籤，或先不加標籤。</p>
@@ -1070,7 +1091,7 @@ export default function PersistentMailboxPanel({
           <div className="modal-card" role="dialog" aria-modal="true" aria-labelledby="untagged-preservation-title">
             <div className="message-section__header">
               <h3 id="untagged-preservation-title">設定標籤</h3>
-              <span>{untaggedMailboxForPreservation}@{MAIL_DOMAIN}</span>
+              <span>{untaggedMailboxForPreservation}@{activeDomain}</span>
             </div>
 
             <p className="muted modal-copy">請為這個無標籤的信箱設定標籤，或稍後再設定。</p>
@@ -1105,7 +1126,11 @@ export default function PersistentMailboxPanel({
                 onClick={() => {
                   const nextTag = normalizeMailboxTag(untaggedPreservationTagDraft);
                   const mailboxId = untaggedMailboxForPreservation;
-                  setSavedMailboxes((prev) => prev.map((item) => (item.mailboxId === mailboxId ? { ...item, tag: nextTag } : item)));
+                  setSavedMailboxes((prev) => prev.map((item) => (
+                    item.mailboxId === mailboxId && (item.domain || DEFAULT_MAIL_DOMAIN) === activeDomain
+                      ? { ...item, tag: nextTag }
+                      : item
+                  )));
                   setUntaggedMailboxForPreservation('');
                   setUntaggedPreservationTagDraft('');
                 }} 

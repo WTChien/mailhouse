@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  MAIL_DOMAIN,
+  DEFAULT_MAIL_DOMAIN,
   cleanupReadMessages,
   createTemporaryMailbox,
   deleteAllMailboxMessages,
@@ -17,16 +17,58 @@ import {
 } from './mailboxUtils';
 
 type BusyAction = 'create' | 'move' | null;
+const ACCOUNT_NAME_BUILDER_KEY = 'mailhouse.accountNameBuilder';
+type NameBuilderRow = {
+  id: 'name' | 'account' | 'password';
+  label: string;
+  left: string;
+  number: string;
+  right: string;
+};
+const DEFAULT_NAME_BUILDER_ROWS: NameBuilderRow[] = [
+  { id: 'name', label: '名稱', left: 'r', number: '11', right: 'm4000' },
+  { id: 'account', label: '帳號', left: 'R', number: '11', right: 'm-0400' },
+  { id: 'password', label: '密碼', left: 'pass', number: '11', right: '!' },
+];
 
 type TemporaryMailboxPanelProps = {
   isActive?: boolean;
+  activeDomain: string;
   onMoveToPersistent?: (mailboxId: string) => void;
-  savedMailboxes?: Array<{ mailboxId: string; tag?: string }>;
+  savedMailboxes?: Array<{ mailboxId: string; domain?: string; tag?: string }>;
 };
 
-export default function TemporaryMailboxPanel({ isActive = true, onMoveToPersistent, savedMailboxes = [] }: TemporaryMailboxPanelProps) {
+export default function TemporaryMailboxPanel({ isActive = true, activeDomain, onMoveToPersistent, savedMailboxes = [] }: TemporaryMailboxPanelProps) {
   const initialTemporaryMailbox = readTemporaryMailboxState();
-  const [mailboxId, setMailboxId] = useState(initialTemporaryMailbox?.mailboxId ?? '');
+  const initialNameBuilder = (() => {
+    if (typeof window === 'undefined') {
+      return DEFAULT_NAME_BUILDER_ROWS;
+    }
+
+    try {
+      const parsed = JSON.parse(window.localStorage.getItem(ACCOUNT_NAME_BUILDER_KEY) || '[]') as unknown;
+      if (!Array.isArray(parsed)) {
+        return DEFAULT_NAME_BUILDER_ROWS;
+      }
+
+      return DEFAULT_NAME_BUILDER_ROWS.map((fallback) => {
+        const storedRow = parsed.find((item) => item && typeof item === 'object' && (item as Partial<NameBuilderRow>).id === fallback.id) as Partial<NameBuilderRow> | undefined;
+        return {
+          ...fallback,
+          left: typeof storedRow?.left === 'string' ? storedRow.left : fallback.left,
+          number: typeof storedRow?.number === 'string' ? storedRow.number : fallback.number,
+          right: typeof storedRow?.right === 'string' ? storedRow.right : fallback.right,
+        };
+      });
+    } catch {
+      return DEFAULT_NAME_BUILDER_ROWS;
+    }
+  })();
+  const [mailboxId, setMailboxId] = useState(
+    (initialTemporaryMailbox?.domain || DEFAULT_MAIL_DOMAIN) === activeDomain ? initialTemporaryMailbox?.mailboxId ?? '' : '',
+  );
+  const [nameRows, setNameRows] = useState<NameBuilderRow[]>(initialNameBuilder);
+  const [copiedNameRow, setCopiedNameRow] = useState<NameBuilderRow['id'] | null>(null);
   const [messages, setMessages] = useState<MailMessage[]>([]);
   const [statusText, setStatusText] = useState(
     initialTemporaryMailbox?.mailboxId
@@ -40,14 +82,14 @@ export default function TemporaryMailboxPanel({ isActive = true, onMoveToPersist
   const [messagesCollapsed, setMessagesCollapsed] = useState(true);
   const messagePollInFlightRef = useRef(false);
 
-  const emailAddress = useMemo(() => (mailboxId ? `${mailboxId}@${MAIL_DOMAIN}` : ''), [mailboxId]);
+  const emailAddress = useMemo(() => (mailboxId ? `${mailboxId}@${activeDomain}` : ''), [activeDomain, mailboxId]);
   const isBusy = busyAction !== null;
   const isCreating = busyAction === 'create';
   const isMoving = busyAction === 'move';
   const isMailboxReserved = useMemo(() => {
     if (!mailboxId) return false;
-    return savedMailboxes.some(item => item.mailboxId === mailboxId);
-  }, [mailboxId, savedMailboxes]);
+    return savedMailboxes.some(item => item.mailboxId === mailboxId && (item.domain || DEFAULT_MAIL_DOMAIN) === activeDomain);
+  }, [activeDomain, mailboxId, savedMailboxes]);
 
   const syncMessages = async (targetMailboxId: string) => {
     if (messagePollInFlightRef.current) {
@@ -56,7 +98,7 @@ export default function TemporaryMailboxPanel({ isActive = true, onMoveToPersist
 
     messagePollInFlightRef.current = true;
     try {
-      const data = await getMailboxMessages(targetMailboxId);
+      const data = await getMailboxMessages(targetMailboxId, activeDomain);
       setMessages(data.messages ?? []);
     } catch (error) {
       console.error(error);
@@ -78,7 +120,7 @@ export default function TemporaryMailboxPanel({ isActive = true, onMoveToPersist
     setBusyAction('create');
 
     try {
-      const data = await createTemporaryMailbox();
+      const data = await createTemporaryMailbox(activeDomain);
       setMailboxId(data.mailboxId);
       setMessages([]);
       setCopied(false);
@@ -93,6 +135,18 @@ export default function TemporaryMailboxPanel({ isActive = true, onMoveToPersist
       setBusyAction(null);
     }
   };
+
+  useEffect(() => {
+    const storedMailbox = readTemporaryMailboxState();
+    if (storedMailbox && (storedMailbox.domain || DEFAULT_MAIL_DOMAIN) === activeDomain) {
+      setMailboxId(storedMailbox.mailboxId);
+      return;
+    }
+
+    setMailboxId('');
+    setMessages([]);
+    clearTemporaryMailboxState();
+  }, [activeDomain]);
 
   useEffect(() => {
     if (!mailboxId) {
@@ -111,9 +165,10 @@ export default function TemporaryMailboxPanel({ isActive = true, onMoveToPersist
 
     writeTemporaryMailboxState({
       mailboxId,
+      domain: activeDomain,
       expireAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(), // Store expireAt for compatibility
     });
-  }, [mailboxId]);
+  }, [activeDomain, mailboxId]);
 
   useEffect(() => {
     if (!isActive || !mailboxId) {
@@ -180,6 +235,45 @@ export default function TemporaryMailboxPanel({ isActive = true, onMoveToPersist
     }
   };
 
+  const updateNameRow = (rowId: NameBuilderRow['id'], field: 'left' | 'number' | 'right', value: string) => {
+    setNameRows((prev) => prev.map((row) => (
+      row.id === rowId
+        ? { ...row, [field]: field === 'number' ? value.replace(/[^0-9]/g, '') : value }
+        : row
+    )));
+  };
+
+  const getNameRowResult = (row: NameBuilderRow) => `${row.left}${row.number}${row.right}`;
+
+  const handleCopyNameRow = async (row: NameBuilderRow) => {
+    const result = getNameRowResult(row);
+    if (!result) {
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(result);
+      setCopiedNameRow(row.id);
+      window.setTimeout(() => setCopiedNameRow(null), 1500);
+    } catch (error) {
+      console.error(error);
+      setErrorText('帳號名稱複製失敗');
+    }
+  };
+
+  const incrementNameNumber = () => {
+    setNameRows((prev) => prev.map((row) => {
+      const trimmedNumber = row.number.trim();
+      const currentNumber = Number.parseInt(trimmedNumber || '0', 10);
+      const nextNumber = Number.isNaN(currentNumber) ? 1 : currentNumber + 1;
+      const shouldPad = /^0\d+$/.test(trimmedNumber);
+      return {
+        ...row,
+        number: shouldPad ? String(nextNumber).padStart(trimmedNumber.length, '0') : String(nextNumber),
+      };
+    }));
+  };
+
   const handleMoveToPersistent = async () => {
     if (!mailboxId) {
       return;
@@ -188,7 +282,7 @@ export default function TemporaryMailboxPanel({ isActive = true, onMoveToPersist
     setBusyAction('move');
 
     try {
-      const data = await promoteMailboxToPersistent(mailboxId);
+      const data = await promoteMailboxToPersistent(mailboxId, activeDomain);
       setStatusText('已移至保留信箱');
       setErrorText('');
       await syncMessages(data.mailboxId);
@@ -207,7 +301,7 @@ export default function TemporaryMailboxPanel({ isActive = true, onMoveToPersist
     }
 
     try {
-      await markMessageRead(mailboxId, messageId, isRead);
+      await markMessageRead(mailboxId, messageId, isRead, activeDomain);
       await syncMessages(mailboxId);
     } catch (error) {
       console.error(error);
@@ -233,13 +327,21 @@ export default function TemporaryMailboxPanel({ isActive = true, onMoveToPersist
     }
 
     try {
-      await deleteAllMailboxMessages(mailboxId);
+      await deleteAllMailboxMessages(mailboxId, activeDomain);
       await syncMessages(mailboxId);
     } catch (error) {
       console.error(error);
       setErrorText(error instanceof Error ? error.message : '刪除全部郵件失敗。');
     }
   };
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    window.localStorage.setItem(ACCOUNT_NAME_BUILDER_KEY, JSON.stringify(nameRows));
+  }, [nameRows]);
 
   return (
     <section className="mail-card">
@@ -301,6 +403,60 @@ export default function TemporaryMailboxPanel({ isActive = true, onMoveToPersist
           </button>
         </div>
       </div>
+
+      <section className="name-builder">
+        <div className="name-builder__header">
+          <div>
+            <h3>帳號命名器</h3>
+            <p className="muted">固定左右字元，中間數字按 +1 自動遞增。</p>
+          </div>
+          <button type="button" className="secondary tiny" onClick={incrementNameNumber}>
+            +1
+          </button>
+        </div>
+
+        <div className="name-builder__table">
+          <div className="name-builder__table-head" aria-hidden="true">
+            <span>類型</span>
+            <span>左側</span>
+            <span>數字</span>
+            <span>右側</span>
+            <span>結果</span>
+            <span></span>
+          </div>
+          {nameRows.map((row) => {
+            const result = getNameRowResult(row);
+            return (
+              <div className="name-builder__row" key={row.id}>
+                <strong>{row.label}</strong>
+                <input
+                  type="text"
+                  value={row.left}
+                  onChange={(event) => updateNameRow(row.id, 'left', event.target.value)}
+                  aria-label={`${row.label}左側固定`}
+                />
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  value={row.number}
+                  onChange={(event) => updateNameRow(row.id, 'number', event.target.value)}
+                  aria-label={`${row.label}中間數字`}
+                />
+                <input
+                  type="text"
+                  value={row.right}
+                  onChange={(event) => updateNameRow(row.id, 'right', event.target.value)}
+                  aria-label={`${row.label}右側固定`}
+                />
+                <code>{result || '尚未輸入'}</code>
+                <button type="button" className="secondary tiny" onClick={() => void handleCopyNameRow(row)} disabled={!result}>
+                  {copiedNameRow === row.id ? '已複製' : '複製'}
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      </section>
 
       {errorText ? <p className="error-text">{errorText}</p> : null}
 

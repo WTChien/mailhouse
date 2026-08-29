@@ -5,6 +5,7 @@
   "compatibility_date": "2026-04-11",
   "vars": {
     "API_WEBHOOK_URL": "https://api.mailhouse.gradaide.xyz/api/webhook/email",
-    "MAIL_DOMAIN": "gradaide.xyz"
+    "DEFAULT_MAIL_DOMAIN": "gradaide.xyz",
+    "MAIL_DOMAINS": "gradaide.xyz,weiting.win"
   }
 }

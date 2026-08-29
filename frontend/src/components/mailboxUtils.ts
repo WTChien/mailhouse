@@ -47,6 +47,7 @@ export type TagFieldValues = Partial<Record<TagFieldKey, string>>;
 
 export type SavedMailboxItem = {
   mailboxId: string;
+  domain?: string;
   tag: string;
   createdAt: string;
   lastUsedAt: string;
@@ -55,6 +56,7 @@ export type SavedMailboxItem = {
 
 export type TemporaryMailboxState = {
   mailboxId: string;
+  domain?: string;
   expireAt: string;
 };
 
@@ -100,6 +102,10 @@ export function generateSuggestedMailboxName() {
 
 export function normalizeMailboxId(value: string) {
   return value.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 24);
+}
+
+export function normalizeMailDomain(value?: string | null) {
+  return String(value || '').trim().toLowerCase();
 }
 
 export function normalizeMailboxTag(value: string) {
@@ -151,6 +157,7 @@ function normalizeSavedMailboxItem(item: Partial<SavedMailboxItem>, fallbackNow:
 
   return {
     mailboxId,
+    domain: normalizeMailDomain(item.domain),
     tag: normalizeMailboxTag(item.tag ?? ''),
     createdAt,
     lastUsedAt,
@@ -198,9 +205,10 @@ export function readSavedMailboxes() {
 
     const deduped = new Map<string, SavedMailboxItem>();
     normalizedItems.forEach((item) => {
-      const existing = deduped.get(item.mailboxId);
+      const dedupeKey = `${item.mailboxId}@${item.domain || ''}`;
+      const existing = deduped.get(dedupeKey);
       if (!existing) {
-        deduped.set(item.mailboxId, item);
+        deduped.set(dedupeKey, item);
         return;
       }
 
@@ -210,8 +218,9 @@ export function readSavedMailboxes() {
       const lastUsedAt = new Date(existing.lastUsedAt).getTime() >= new Date(item.lastUsedAt).getTime()
         ? existing.lastUsedAt
         : item.lastUsedAt;
-      deduped.set(item.mailboxId, {
+      deduped.set(dedupeKey, {
         mailboxId: item.mailboxId,
+        domain: item.domain || existing.domain,
         tag: item.tag || existing.tag,
         createdAt,
         lastUsedAt,
