@@ -1,6 +1,6 @@
 # Mailhouse
 
-Disposable email system built with **React (TSX)**, **FastAPI**, **Firebase Firestore**, and **Cloudflare Email Workers** for the `gradaide.xyz` domain.
+Disposable email system built with **React (TSX)**, **FastAPI**, **Firebase Firestore**, and **Cloudflare Email Workers** for the `weiting.win` domain.
 
 > **帳號資訊**：Firebase / Firestore 專案使用 Google 帳號 `tim40a1`。
 
@@ -115,11 +115,10 @@ npm run check
 Then set these values in `worker/.dev.vars`:
 
 - `API_WEBHOOK_URL=https://your-backend-domain/api/webhook/email`
-- `DEFAULT_MAIL_DOMAIN=gradaide.xyz`
-- `MAIL_DOMAINS=gradaide.xyz,weiting.win`
+- Mail domain: `weiting.win` (defined by the application)
 - `WEBHOOK_SECRET=your_shared_secret`
 
-After that, deploy the worker and bind it to the catch-all route for `gradaide.xyz` in Cloudflare Email Routing.
+After that, deploy the worker and bind it to the catch-all route for `weiting.win` in Cloudflare Email Routing.
 
 ## 2) Backend setup
 
@@ -134,8 +133,7 @@ uvicorn main:app --reload --port 8000 --env-file .env
 
 Set these values in `backend/.env` as needed:
 
-- `DEFAULT_MAIL_DOMAIN=gradaide.xyz`
-- `MAIL_DOMAINS=gradaide.xyz,weiting.win`
+- Mail domain: `weiting.win` (defined by the application)
 - `WEBHOOK_SECRET=your_shared_secret`
 - `TEMP_MAIL_ADMIN_KEY=your_long_random_admin_secret`（保護網站內的 API Key 管理畫面）
 - `TEMP_MAIL_API_KEY=optional_static_key`（可選；建議改用網站產生的 Key）
@@ -158,8 +156,7 @@ npm run dev
 Set these values in `frontend/.env`:
 
 - `VITE_API_BASE_URL=http://127.0.0.1:8000`
-- `VITE_DEFAULT_MAIL_DOMAIN=gradaide.xyz`
-- `VITE_MAIL_DOMAINS=gradaide.xyz,weiting.win`
+- Mail domain: `weiting.win` (defined by the application)
 
 ## API overview
 
@@ -186,10 +183,10 @@ Set `TEMP_MAIL_ADMIN_KEY`, restart the backend, then use the **API 設定** butt
 Example:
 
 ```bash
-curl -X POST https://api.mailhouse.gradaide.xyz/api/temp-mail \
+curl -X POST https://api.mailhouse.weiting.win/api/temp-mail \
   -H "Authorization: Bearer mhk_your_generated_key"
 
-curl https://api.mailhouse.gradaide.xyz/api/temp-mail/your_mailbox_id/code \
+curl https://api.mailhouse.weiting.win/api/temp-mail/your_mailbox_id/code \
   -H "Authorization: Bearer mhk_your_generated_key"
 ```
 
@@ -203,7 +200,7 @@ Example payload:
 
 ```json
 {
-  "to": "abc12@gradaide.xyz",
+  "to": "abc12@weiting.win",
   "from": "sender@example.com",
   "subject": "Hello",
   "text": "Test message",

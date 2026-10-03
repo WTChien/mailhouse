@@ -24,14 +24,10 @@ from verification import extract_verification_code
 load_dotenv()
 
 app = FastAPI(title="Mailhouse Webhook API", version="3.0.0")
-DEFAULT_MAIL_DOMAIN = os.getenv("DEFAULT_MAIL_DOMAIN", os.getenv("MAIL_DOMAIN", "gradaide.xyz")).lower()
-MAIL_DOMAINS = [
-    domain.strip().lower()
-    for domain in os.getenv("MAIL_DOMAINS", DEFAULT_MAIL_DOMAIN).split(",")
-    if domain.strip()
-]
-if DEFAULT_MAIL_DOMAIN not in MAIL_DOMAINS:
-    MAIL_DOMAINS.insert(0, DEFAULT_MAIL_DOMAIN)
+# Mailhouse now serves one canonical domain. Keeping this as a single value also
+# prevents a comma-separated environment variable from leaking into an address.
+DEFAULT_MAIL_DOMAIN = "weiting.win"
+MAIL_DOMAINS = [DEFAULT_MAIL_DOMAIN]
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "")
 TEMP_MAIL_API_KEY = os.getenv("TEMP_MAIL_API_KEY", "").strip()
 TEMP_MAIL_ADMIN_KEY = os.getenv("TEMP_MAIL_ADMIN_KEY", "").strip()

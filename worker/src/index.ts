@@ -2,8 +2,6 @@ import PostalMime from 'postal-mime';
 
 interface Env {
   API_WEBHOOK_URL: string;
-  DEFAULT_MAIL_DOMAIN?: string;
-  MAIL_DOMAINS?: string;
   WEBHOOK_SECRET?: string;
 }
 

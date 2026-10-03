@@ -41,11 +41,8 @@ export type ApiKeySummary = {
   usage: ApiKeyUsage;
 };
 
-export const MAIL_DOMAINS = (import.meta.env.VITE_MAIL_DOMAINS ?? import.meta.env.VITE_MAIL_DOMAIN ?? 'gradaide.xyz')
-  .split(',')
-  .map((domain: string) => domain.trim().toLowerCase())
-  .filter(Boolean);
-export const DEFAULT_MAIL_DOMAIN = import.meta.env.VITE_DEFAULT_MAIL_DOMAIN ?? MAIL_DOMAINS[0] ?? 'gradaide.xyz';
+export const DEFAULT_MAIL_DOMAIN = 'weiting.win';
+export const MAIL_DOMAINS = [DEFAULT_MAIL_DOMAIN];
 export const MAIL_DOMAIN = DEFAULT_MAIL_DOMAIN;
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '');
 let activeMailDomain = DEFAULT_MAIL_DOMAIN;

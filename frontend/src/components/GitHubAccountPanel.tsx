@@ -548,7 +548,7 @@ export default function GitHubAccountPanel({
 
       {focusOnlyMailboxId ? (
         <div className="saved-list-toolbar">
-          <p className="muted">已聚焦顯示：{focusOnlyMailboxId}@gradaide.xyz</p>
+          <p className="muted">已聚焦顯示：{focusOnlyMailboxId}@{MAIL_DOMAIN}</p>
           <button
             type="button"
             className="small"
@@ -630,12 +630,12 @@ export default function GitHubAccountPanel({
                   <h3
                     onClick={(e) => {
                       e.stopPropagation();
-                      void handleCopy(`${account.mailboxId}@gradaide.xyz`);
+                      void handleCopy(`${account.mailboxId}@${MAIL_DOMAIN}`);
                     }}
                     style={{ cursor: 'pointer' }}
                     title="點擊複製"
                   >
-                    {account.mailboxId}@gradaide.xyz
+                    {account.mailboxId}@{MAIL_DOMAIN}
                   </h3>
                   <span className={`status-badge ${account.status}`}>
                     {STATUS_LABELS[account.status]}
@@ -650,11 +650,11 @@ export default function GitHubAccountPanel({
                         <label>信箱：</label>
                         <input
                           type="text"
-                          value={`${account.mailboxId}@gradaide.xyz`}
+                          value={`${account.mailboxId}@${MAIL_DOMAIN}`}
                           readOnly
                           className="copy-input"
                         />
-                        <button type="button" className="small" onClick={() => handleCopy(`${account.mailboxId}@gradaide.xyz`)}>
+                        <button type="button" className="small" onClick={() => handleCopy(`${account.mailboxId}@${MAIL_DOMAIN}`)}>
                           複製
                         </button>
                       </div>
