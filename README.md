@@ -50,6 +50,7 @@ Incoming email
 ```text
 mailboxes/{email_prefix}
   mode: "temporary" | "persistent"
+  apiManaged: boolean (API-created temporary mailboxes only)
   expireAt: Timestamp | null
   createdAt: Timestamp
   updatedAt: Timestamp
@@ -64,6 +65,28 @@ mailboxes/{email_prefix}/messages/{message_id}
   receivedAt: Timestamp
   isRead: boolean
   readAt: Timestamp | null
+
+temp_mail_api_state/{email_prefix}
+  mailboxId: string
+  domain: string
+  expireAt: Timestamp
+  latestVerificationCode: string | null
+  latestVerificationReceivedAt: Timestamp | null
+  latestVerificationSubject: string | null
+
+api_keys/{key_id}
+  name: string
+  prefix: string
+  keyHash: string
+  createdAt: Timestamp
+  revokedAt: Timestamp | null
+
+api_keys/{key_id}/usage_shards/{0..9}
+  total: number
+  create: number
+  code: number
+  delete: number
+  lastUsedAt: Timestamp
 ```
 
 ## Quick start
@@ -114,6 +137,8 @@ Set these values in `backend/.env` as needed:
 - `DEFAULT_MAIL_DOMAIN=gradaide.xyz`
 - `MAIL_DOMAINS=gradaide.xyz,weiting.win`
 - `WEBHOOK_SECRET=your_shared_secret`
+- `TEMP_MAIL_ADMIN_KEY=your_long_random_admin_secret`（保護網站內的 API Key 管理畫面）
+- `TEMP_MAIL_API_KEY=optional_static_key`（可選；建議改用網站產生的 Key）
 - `TEMP_MAILBOX_MINUTES=30`
 - `FIREBASE_SERVICE_ACCOUNT_JSON=...` **or** `FIREBASE_CREDENTIALS_PATH=...`
 
@@ -149,6 +174,24 @@ Main endpoints:
 - `DELETE /api/mailboxes/{mailbox_id}` — delete a mailbox
 - `GET /api/client-sync` — load cross-device client sync state
 - `PATCH /api/client-sync` — update cross-device client sync state
+
+External automation endpoints (Bearer API Key required):
+
+- `POST /api/temp-mail` — create an API-managed temporary mailbox
+- `GET /api/temp-mail/{mailbox_id}/code` — get the latest verification code or `waiting`
+- `DELETE /api/temp-mail/{mailbox_id}` — delete an API-managed temporary mailbox
+
+Set `TEMP_MAIL_ADMIN_KEY`, restart the backend, then use the **API 設定** button in the website header to create, inspect, and revoke API Keys. The complete Key is shown only once; Firestore stores only its SHA-256 hash. The settings page records total requests and separate counts for mailbox creation, code polling, and deletion.
+
+Example:
+
+```bash
+curl -X POST https://api.mailhouse.gradaide.xyz/api/temp-mail \
+  -H "Authorization: Bearer mhk_your_generated_key"
+
+curl https://api.mailhouse.gradaide.xyz/api/temp-mail/your_mailbox_id/code \
+  -H "Authorization: Bearer mhk_your_generated_key"
+```
 
 The Email Worker posts JSON to:
 

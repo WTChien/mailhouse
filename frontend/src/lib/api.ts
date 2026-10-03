@@ -24,6 +24,23 @@ export type ClientSyncState = {
   updatedAt?: string | null;
 };
 
+export type ApiKeyUsage = {
+  total: number;
+  create: number;
+  code: number;
+  delete: number;
+};
+
+export type ApiKeySummary = {
+  id: string;
+  name: string;
+  prefix: string;
+  created_at: string | null;
+  last_used_at: string | null;
+  revoked_at: string | null;
+  usage: ApiKeyUsage;
+};
+
 export const MAIL_DOMAINS = (import.meta.env.VITE_MAIL_DOMAINS ?? import.meta.env.VITE_MAIL_DOMAIN ?? 'gradaide.xyz')
   .split(',')
   .map((domain: string) => domain.trim().toLowerCase())
@@ -67,6 +84,17 @@ async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
   }
 
   return payload as T;
+}
+
+async function adminApiRequest<T>(path: string, adminKey: string, init?: RequestInit): Promise<T> {
+  return apiRequest<T>(path, {
+    ...init,
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Admin-Key': adminKey,
+      ...(init?.headers ?? {}),
+    },
+  });
 }
 
 export async function createTemporaryMailbox(domain = activeMailDomain) {
@@ -137,5 +165,22 @@ export async function updateClientSyncState(payload: Partial<Pick<ClientSyncStat
   return apiRequest<ClientSyncState>('/api/client-sync', {
     method: 'PATCH',
     body: JSON.stringify(payload),
+  });
+}
+
+export async function listApiKeys(adminKey: string) {
+  return adminApiRequest<{ status: string; api_keys: ApiKeySummary[] }>('/api/admin/api-keys', adminKey);
+}
+
+export async function createApiKey(name: string, adminKey: string) {
+  return adminApiRequest<{ status: string; api_key: string; key: ApiKeySummary }>('/api/admin/api-keys', adminKey, {
+    method: 'POST',
+    body: JSON.stringify({ name }),
+  });
+}
+
+export async function revokeApiKey(keyId: string, adminKey: string) {
+  return adminApiRequest<{ status: string; id: string }>(`/api/admin/api-keys/${encodeURIComponent(keyId)}`, adminKey, {
+    method: 'DELETE',
   });
 }

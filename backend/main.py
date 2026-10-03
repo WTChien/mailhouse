@@ -1,4 +1,6 @@
 import json
+import hashlib
+import hmac
 import os
 import re
 import secrets
@@ -9,11 +11,14 @@ from typing import Any, Optional
 
 import firebase_admin
 from dotenv import load_dotenv
-from fastapi import FastAPI, Header, HTTPException, Query
+from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from firebase_admin import credentials, firestore
+from google.api_core.exceptions import AlreadyExists
 from pydantic import BaseModel, ConfigDict, Field
+
+from verification import extract_verification_code
 
 
 load_dotenv()
@@ -28,6 +33,8 @@ MAIL_DOMAINS = [
 if DEFAULT_MAIL_DOMAIN not in MAIL_DOMAINS:
     MAIL_DOMAINS.insert(0, DEFAULT_MAIL_DOMAIN)
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "")
+TEMP_MAIL_API_KEY = os.getenv("TEMP_MAIL_API_KEY", "").strip()
+TEMP_MAIL_ADMIN_KEY = os.getenv("TEMP_MAIL_ADMIN_KEY", "").strip()
 CORS_ORIGINS = [
     origin.strip()
     for origin in os.getenv(
@@ -102,6 +109,10 @@ class ClientSyncStateUpdatePayload(BaseModel):
     registrationRuntimeDraft: Optional[RegistrationDraftPayload] = None
 
 
+class ApiKeyCreatePayload(BaseModel):
+    name: str = Field(default="ADB automation", min_length=1, max_length=80)
+
+
 def load_firebase_credential() -> Optional[credentials.Base]:
     """Load Firebase credentials from env JSON or a local service account file."""
     service_account_json = os.getenv("FIREBASE_SERVICE_ACCOUNT_JSON", "").strip()
@@ -131,6 +142,98 @@ def init_firestore_client() -> firestore.Client:
 
 
 db = init_firestore_client()
+
+API_KEY_TOKEN_PATTERN = re.compile(r"^mhk_([a-f0-9]{16})_([A-Za-z0-9_-]{32,})$")
+STRICT_TEMP_MAILBOX_ID_PATTERN = re.compile(r"^[a-z0-9]{8,24}$")
+
+
+def hash_api_key(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def require_admin_key(x_admin_key: Optional[str] = Header(default=None)) -> None:
+    if not TEMP_MAIL_ADMIN_KEY:
+        raise HTTPException(status_code=503, detail="API key administration is not configured")
+
+    if not x_admin_key or not hmac.compare_digest(x_admin_key, TEMP_MAIL_ADMIN_KEY):
+        raise HTTPException(status_code=401, detail="invalid admin key")
+
+
+def require_temp_mail_api_key(authorization: Optional[str] = Header(default=None)) -> dict[str, Any]:
+    scheme, separator, raw_token = (authorization or "").partition(" ")
+    if not separator or scheme.lower() != "bearer":
+        raise HTTPException(
+            status_code=401,
+            detail="missing bearer token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    token = raw_token.strip()
+    if not token:
+        raise HTTPException(status_code=401, detail="invalid API key", headers={"WWW-Authenticate": "Bearer"})
+
+    if TEMP_MAIL_API_KEY and hmac.compare_digest(token, TEMP_MAIL_API_KEY):
+        return {"id": "environment", "ref": db.collection("api_key_usage").document("environment")}
+
+    token_match = API_KEY_TOKEN_PATTERN.fullmatch(token)
+    if not token_match:
+        raise HTTPException(status_code=401, detail="invalid API key", headers={"WWW-Authenticate": "Bearer"})
+
+    key_id = token_match.group(1)
+    key_ref = db.collection("api_keys").document(key_id)
+    key_snapshot = key_ref.get()
+    if not key_snapshot.exists:
+        raise HTTPException(status_code=401, detail="invalid API key", headers={"WWW-Authenticate": "Bearer"})
+
+    key_data = key_snapshot.to_dict() or {}
+    stored_hash = str(key_data.get("keyHash", ""))
+    if key_data.get("revokedAt") is not None or not stored_hash or not hmac.compare_digest(hash_api_key(token), stored_hash):
+        raise HTTPException(status_code=401, detail="invalid API key", headers={"WWW-Authenticate": "Bearer"})
+
+    return {"id": key_id, "ref": key_ref}
+
+
+def record_api_usage(api_key: dict[str, Any], action: str) -> None:
+    key_ref = api_key["ref"]
+    # Polling may happen every second and several clients can share one key.
+    # Shards avoid turning the API-key document into a single write hotspot.
+    usage_ref = key_ref.collection("usage_shards").document(str(secrets.randbelow(10)))
+    usage_ref.set(
+        {
+            "lastUsedAt": firestore.SERVER_TIMESTAMP,
+            "total": firestore.Increment(1),
+            action: firestore.Increment(1),
+        },
+        merge=True,
+    )
+
+
+def serialize_api_key(document: firestore.DocumentSnapshot) -> dict[str, Any]:
+    data = document.to_dict() or {}
+    usage = {"total": 0, "create": 0, "code": 0, "delete": 0}
+    last_used_at = to_utc_datetime(data.get("lastUsedAt"))
+    for shard in document.reference.collection("usage_shards").stream():
+        shard_data = shard.to_dict() or {}
+        for field_name in usage:
+            usage[field_name] += int(shard_data.get(field_name, 0) or 0)
+        shard_last_used_at = to_utc_datetime(shard_data.get("lastUsedAt"))
+        if shard_last_used_at and (last_used_at is None or shard_last_used_at > last_used_at):
+            last_used_at = shard_last_used_at
+
+    return {
+        "id": document.id,
+        "name": data.get("name", "Unnamed key"),
+        "prefix": data.get("prefix", ""),
+        "created_at": to_iso_string(data.get("createdAt")),
+        "last_used_at": to_iso_string(last_used_at),
+        "revoked_at": to_iso_string(data.get("revokedAt")),
+        "usage": {
+            "total": usage["total"],
+            "create": usage["create"],
+            "code": usage["code"],
+            "delete": usage["delete"],
+        },
+    }
 
 
 def extract_email(raw_value: str) -> Optional[str]:
@@ -168,6 +271,10 @@ def encode_mailbox_doc_id(prefix: str, domain: str) -> str:
 
 def get_mailbox_ref(prefix: str, domain: str) -> firestore.DocumentReference:
     return db.collection("mailboxes").document(encode_mailbox_doc_id(prefix, domain))
+
+
+def get_temp_mail_api_state_ref(prefix: str, domain: str) -> firestore.DocumentReference:
+    return db.collection("temp_mail_api_state").document(encode_mailbox_doc_id(prefix, domain))
 
 
 def normalize_mailbox_tag(value: str) -> str:
@@ -378,6 +485,54 @@ def generate_mailbox_id(length: int = 5) -> str:
     return "".join(secrets.choice(RANDOM_CHARS) for _ in range(length))
 
 
+def create_unique_temporary_mailbox(
+    mail_domain: str,
+    *,
+    id_length: int = 5,
+    api_managed: bool = False,
+) -> tuple[str, datetime]:
+    """Atomically reserve a unique temporary mailbox in Firestore."""
+    for _ in range(20):
+        prefix = generate_mailbox_id(id_length)
+        mailbox_ref = get_mailbox_ref(prefix, mail_domain)
+        expire_at = datetime.now(timezone.utc) + timedelta(minutes=TEMP_MAILBOX_MINUTES)
+        mailbox_data: dict[str, Any] = {
+            "domain": mail_domain,
+            "mode": "temporary",
+            "expireAt": expire_at,
+            "createdAt": firestore.SERVER_TIMESTAMP,
+            "updatedAt": firestore.SERVER_TIMESTAMP,
+        }
+
+        if api_managed:
+            mailbox_data["apiManaged"] = True
+
+        try:
+            mailbox_ref.create(mailbox_data)
+            if api_managed:
+                try:
+                    get_temp_mail_api_state_ref(prefix, mail_domain).set(
+                        {
+                            "mailboxId": prefix,
+                            "domain": mail_domain,
+                            "expireAt": expire_at,
+                            "latestVerificationCode": None,
+                            "latestVerificationReceivedAt": None,
+                            "latestVerificationSubject": None,
+                            "createdAt": firestore.SERVER_TIMESTAMP,
+                            "updatedAt": firestore.SERVER_TIMESTAMP,
+                        }
+                    )
+                except Exception:
+                    mailbox_ref.delete()
+                    raise
+            return prefix, expire_at
+        except AlreadyExists:
+            continue
+
+    raise HTTPException(status_code=500, detail="unable to create temporary mailbox")
+
+
 def get_recipient_parts(raw_to: str) -> Optional[tuple[str, str]]:
     recipient = extract_email(raw_to)
     if not recipient or "@" not in recipient:
@@ -490,6 +645,8 @@ def cleanup_mailboxes_and_messages(read_retention_hours: int = 0) -> dict[str, i
                 deleted_messages += 1
 
         if mailbox_mode == "temporary" and expire_at is not None and expire_at <= now:
+            if mailbox_data.get("apiManaged") is True:
+                db.collection("temp_mail_api_state").document(mailbox_doc.id).delete()
             mailbox_ref.delete()
             deleted_mailboxes += 1
 
@@ -588,32 +745,15 @@ async def get_mail_domains() -> dict[str, Any]:
 @app.post("/api/mailboxes/temp")
 async def create_temporary_mailbox(domain: Optional[str] = Query(default=None)) -> dict[str, Any]:
     mail_domain = normalize_mail_domain(domain)
-    for _ in range(20):
-        prefix = generate_mailbox_id()
-        mailbox_ref = get_mailbox_ref(prefix, mail_domain)
-
-        if not mailbox_ref.get().exists:
-            expire_at = datetime.now(timezone.utc) + timedelta(minutes=TEMP_MAILBOX_MINUTES)
-            mailbox_ref.set(
-                {
-                    "domain": mail_domain,
-                    "mode": "temporary",
-                    "expireAt": expire_at,
-                    "createdAt": firestore.SERVER_TIMESTAMP,
-                    "updatedAt": firestore.SERVER_TIMESTAMP,
-                },
-                merge=True,
-            )
-            return {
-                "status": "ok",
-                "mailboxId": prefix,
-                "domain": mail_domain,
-                "email": f"{prefix}@{mail_domain}",
-                "mode": "temporary",
-                "expireAt": expire_at.isoformat(),
-            }
-
-    raise HTTPException(status_code=500, detail="unable to create temporary mailbox")
+    prefix, expire_at = create_unique_temporary_mailbox(mail_domain)
+    return {
+        "status": "ok",
+        "mailboxId": prefix,
+        "domain": mail_domain,
+        "email": f"{prefix}@{mail_domain}",
+        "mode": "temporary",
+        "expireAt": expire_at.isoformat(),
+    }
 
 
 @app.post("/api/mailboxes/persistent")
@@ -850,9 +990,145 @@ async def delete_mailbox(mailbox_id: str, domain: Optional[str] = Query(default=
     if not mailbox_snapshot.exists:
         return {"status": "ok", "mailboxId": prefix}
 
+    mailbox_data = mailbox_snapshot.to_dict() or {}
     delete_mailbox_messages(mailbox_ref)
     mailbox_ref.delete()
+    if mailbox_data.get("apiManaged") is True:
+        get_temp_mail_api_state_ref(prefix, mail_domain).delete()
     return {"status": "ok", "mailboxId": prefix}
+
+
+@app.get("/api/admin/api-keys")
+async def list_api_keys(_: None = Depends(require_admin_key)) -> dict[str, Any]:
+    key_documents = list(db.collection("api_keys").stream())
+    key_documents.sort(
+        key=lambda document: to_utc_datetime((document.to_dict() or {}).get("createdAt")) or datetime.min.replace(tzinfo=timezone.utc),
+        reverse=True,
+    )
+    return {"status": "ok", "api_keys": [serialize_api_key(document) for document in key_documents]}
+
+
+@app.post("/api/admin/api-keys", status_code=201)
+async def create_api_key(payload: ApiKeyCreatePayload, _: None = Depends(require_admin_key)) -> dict[str, Any]:
+    name = re.sub(r"\s+", " ", payload.name).strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="API key name is required")
+
+    for _attempt in range(10):
+        key_id = secrets.token_hex(8)
+        raw_api_key = f"mhk_{key_id}_{secrets.token_urlsafe(32)}"
+        key_ref = db.collection("api_keys").document(key_id)
+        try:
+            key_ref.create(
+                {
+                    "name": name,
+                    "prefix": f"{raw_api_key[:14]}…",
+                    "keyHash": hash_api_key(raw_api_key),
+                    "createdAt": firestore.SERVER_TIMESTAMP,
+                    "lastUsedAt": None,
+                    "revokedAt": None,
+                    "usage": {"total": 0, "create": 0, "code": 0, "delete": 0},
+                }
+            )
+            return {
+                "status": "created",
+                "api_key": raw_api_key,
+                "key": {
+                    "id": key_id,
+                    "name": name,
+                    "prefix": f"{raw_api_key[:14]}…",
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                    "last_used_at": None,
+                    "revoked_at": None,
+                    "usage": {"total": 0, "create": 0, "code": 0, "delete": 0},
+                },
+            }
+        except AlreadyExists:
+            continue
+
+    raise HTTPException(status_code=500, detail="unable to create API key")
+
+
+@app.delete("/api/admin/api-keys/{key_id}")
+async def revoke_api_key(key_id: str, _: None = Depends(require_admin_key)) -> dict[str, Any]:
+    if not re.fullmatch(r"[a-f0-9]{16}", key_id):
+        raise HTTPException(status_code=400, detail="invalid API key id")
+
+    key_ref = db.collection("api_keys").document(key_id)
+    key_snapshot = key_ref.get()
+    if not key_snapshot.exists:
+        raise HTTPException(status_code=404, detail="API key not found")
+
+    key_ref.set({"revokedAt": firestore.SERVER_TIMESTAMP}, merge=True)
+    return {"status": "revoked", "id": key_id}
+
+
+@app.post("/api/temp-mail", status_code=201)
+async def create_api_temporary_mailbox(
+    api_key: dict[str, Any] = Depends(require_temp_mail_api_key),
+) -> dict[str, Any]:
+    record_api_usage(api_key, "create")
+    prefix, expire_at = create_unique_temporary_mailbox(
+        DEFAULT_MAIL_DOMAIN,
+        id_length=12,
+        api_managed=True,
+    )
+    return {
+        "email": f"{prefix}@{DEFAULT_MAIL_DOMAIN}",
+        "mailbox_id": prefix,
+        "expires_at": expire_at.isoformat(),
+    }
+
+
+@app.get("/api/temp-mail/{mailbox_id}/code")
+async def get_api_temporary_mailbox_code(
+    mailbox_id: str,
+    api_key: dict[str, Any] = Depends(require_temp_mail_api_key),
+) -> dict[str, Any]:
+    record_api_usage(api_key, "code")
+    if not STRICT_TEMP_MAILBOX_ID_PATTERN.fullmatch(mailbox_id):
+        raise HTTPException(status_code=400, detail="invalid mailbox id")
+
+    state_snapshot = get_temp_mail_api_state_ref(mailbox_id, DEFAULT_MAIL_DOMAIN).get()
+    if not state_snapshot.exists:
+        raise HTTPException(status_code=404, detail="mailbox not found")
+
+    state_data = state_snapshot.to_dict() or {}
+    expire_at = to_utc_datetime(state_data.get("expireAt"))
+    if expire_at is None or expire_at <= datetime.now(timezone.utc):
+        raise HTTPException(status_code=410, detail="temporary mailbox has expired")
+
+    code = state_data.get("latestVerificationCode")
+    if not code:
+        return {"status": "waiting", "code": None}
+
+    return {
+        "status": "received",
+        "code": str(code),
+        "received_at": to_iso_string(state_data.get("latestVerificationReceivedAt")),
+        "subject": state_data.get("latestVerificationSubject") or "",
+    }
+
+
+@app.delete("/api/temp-mail/{mailbox_id}")
+async def delete_api_temporary_mailbox(
+    mailbox_id: str,
+    api_key: dict[str, Any] = Depends(require_temp_mail_api_key),
+) -> dict[str, Any]:
+    record_api_usage(api_key, "delete")
+    if not STRICT_TEMP_MAILBOX_ID_PATTERN.fullmatch(mailbox_id):
+        raise HTTPException(status_code=400, detail="invalid mailbox id")
+
+    state_ref = get_temp_mail_api_state_ref(mailbox_id, DEFAULT_MAIL_DOMAIN)
+    state_snapshot = state_ref.get()
+    if not state_snapshot.exists:
+        raise HTTPException(status_code=404, detail="mailbox not found")
+
+    mailbox_ref = get_mailbox_ref(mailbox_id, DEFAULT_MAIL_DOMAIN)
+    delete_mailbox_messages(mailbox_ref)
+    mailbox_ref.delete()
+    state_ref.delete()
+    return {"status": "deleted", "mailbox_id": mailbox_id}
 
 
 @app.post("/api/webhook/email")
@@ -939,4 +1215,15 @@ async def receive_email(
     )
 
     mailbox_ref.set({"updatedAt": firestore.SERVER_TIMESTAMP}, merge=True)
+    verification_code = extract_verification_code(subject_value, text_value)
+    if verification_code and mailbox_data.get("apiManaged") is True:
+        get_temp_mail_api_state_ref(prefix, mail_domain).set(
+            {
+                "latestVerificationCode": verification_code,
+                "latestVerificationReceivedAt": firestore.SERVER_TIMESTAMP,
+                "latestVerificationSubject": subject_value or "(no subject)",
+                "updatedAt": firestore.SERVER_TIMESTAMP,
+            },
+            merge=True,
+        )
     return JSONResponse(status_code=200, content={"status": "stored", "mailbox": prefix, "domain": mail_domain, "mode": mailbox_mode})

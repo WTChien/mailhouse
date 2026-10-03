@@ -25,5 +25,19 @@ service cloud.firestore {
         allow delete: if true;
       }
     }
+
+    // Server-only collections. Firebase Admin SDK bypasses these rules;
+    // browser clients must never read API key hashes or cached codes.
+    match /api_keys/{document=**} {
+      allow read, write: if false;
+    }
+
+    match /api_key_usage/{document=**} {
+      allow read, write: if false;
+    }
+
+    match /temp_mail_api_state/{document=**} {
+      allow read, write: if false;
+    }
   }
 }
